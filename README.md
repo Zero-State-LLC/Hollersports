@@ -135,7 +135,7 @@ make web    # http://127.0.0.1:3000  (proxies /v1 → :8000)
 | Route | Role |
 |-------|------|
 | **Today** | Action groups: fixture day · free-first live · paper loop |
-| **Book** | Candidates, paper portfolio, settlement queue |
+| **Paper book** | Candidates, paper portfolio, settlement queue — **not** a sportsbook |
 | **Health** | Sources, performance, promotion, calibration, reliability, Research ML |
 
 ### 3. Library snippet
@@ -234,6 +234,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for PR expectations and honesty rules for
 
 Apache License 2.0 — see [LICENSE](LICENSE).
 
+## App Store / distribution posture
+
+HollerSports is **not yet** a shipping consumer iOS binary; the Workbench is a local web operator. For **Apple App Store scrutiny** (gambling-adjacent advisory tools), keep this pack green:
+
+| Doc | Role |
+|-----|------|
+| [docs/APP_STORE_READINESS.md](docs/APP_STORE_READINESS.md) | Guideline map, copy rules, pre-submission checklist, reviewer notes |
+| [docs/legal/](docs/legal/README.md) | Privacy · Terms · Age/jurisdiction · Responsible gambling |
+| Workbench `ComplianceGate` | First-run age + paper-only acknowledgment |
+| CI live-UX grep | Forbids `Place bet` / `LIVE_APPROVED` / guarantee phrases |
+
+**Store copy rule of thumb:** lead with *paper simulation / market intelligence*; never claim real-money books, deposits, or guaranteed ROI. Expect **17+** age rating if listed. Host privacy/terms URLs before any consumer submission.
+
 ## Disclaimer
 
-HollerSports is an **advisory and paper-simulation** tool. It does **not** handle real money, place wagers, custody funds, or connect to sportsbooks for execution. It does not guarantee predictive accuracy. Any real-world betting you do is outside this system and your responsibility; sports wagering may be restricted or illegal in your jurisdiction.
+HollerSports is an **advisory and paper-simulation** tool. It does **not** handle real money, place wagers, custody funds, or connect to sportsbooks for execution. It does not guarantee predictive accuracy. Any real-world betting you do is outside this system and your responsibility; sports wagering may be restricted or illegal in your jurisdiction. Operators and users must meet the [age and jurisdiction](docs/legal/AGE_AND_JURISDICTION.md) policy (18+, or 21+ where sports wagering laws require it).

@@ -203,6 +203,12 @@ export default function TodayPage() {
         </div>
       </header>
 
+      <p className="lede" role="note">
+        Operator day board — observe markets, score advisory candidates, run{" "}
+        <strong>paper simulation</strong>. No real money. No sportsbook
+        placement. Performance figures are sim metrics only.
+      </p>
+
       <section className="section" aria-label="Overview">
         <h2 className="section-title">Overview</h2>
         <dl className="overview-strip">

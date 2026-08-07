@@ -25,7 +25,9 @@ const ibmPlexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "HollerSports Operator",
-  description: "Paper-only sports market intelligence workbench. No live capital.",
+  description:
+    "Paper-only sports market intelligence workbench. Advisory candidates and paper simulation only — not a sportsbook, no real money, no wager placement.",
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({

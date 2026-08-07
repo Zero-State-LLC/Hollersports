@@ -54,4 +54,5 @@ Any path that moves money, places a live bet, or sets capital/execution authorit
 - [Repository Atlas](atlas/HOLLERSPORTS_ATLAS.md)
 - [Abraxas lineage (concept-only)](ABRAXAS_LINEAGE.md)
 - [Production readiness](PRODUCTION_READINESS.md)
+- [App Store readiness](APP_STORE_READINESS.md) · [legal/](legal/README.md)
 - [Design spec](superpowers/specs/2026-08-04-hollersports-standalone-design.md)

@@ -5,6 +5,8 @@ Canonical map for HollerSports docs. Prefer **this index + the freeze tag** over
 **Product law:** advisory only · paper simulation · **no real money** · **no book placement**.  
 See [SYSTEM_CONTRACT.md](SYSTEM_CONTRACT.md).
 
+**App Store / distribution:** [APP_STORE_READINESS.md](APP_STORE_READINESS.md) · [legal/](legal/README.md) (privacy, terms, age, responsible gambling).
+
 ---
 
 ## Start here (by job)
@@ -27,6 +29,8 @@ See [SYSTEM_CONTRACT.md](SYSTEM_CONTRACT.md).
 | Doc | Contents |
 |-----|----------|
 | [SYSTEM_CONTRACT.md](SYSTEM_CONTRACT.md) | Ten non-negotiable laws; authority seals |
+| [APP_STORE_READINESS.md](APP_STORE_READINESS.md) | Apple / store scrutiny checklist + reviewer narrative |
+| [legal/README.md](legal/README.md) | Privacy, terms, age/jurisdiction, responsible gambling |
 | [OPERATOR_RUNBOOK.md](OPERATOR_RUNBOOK.md) | Fixture day, free-first, API + Workbench |
 | [TESTING_AND_CALIBRATION.md](TESTING_AND_CALIBRATION.md) | Pytest layers, calibration ladder, Make targets |
 | [BACKFILL_AND_NIGHTLY.md](BACKFILL_AND_NIGHTLY.md) | Settlement bank growth notes |

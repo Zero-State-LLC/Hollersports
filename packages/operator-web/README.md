@@ -38,7 +38,7 @@ npm start
 | Route | Role |
 |-------|------|
 | **Today** | Overview strip + **action board**: fixture day · free-first live · paper loop |
-| **Book** | Candidates (select + paper), paper portfolio, settlement queue |
+| **Paper book** | Candidates (select + paper), paper portfolio, settlement queue — **not** a sportsbook |
 | **Health** | Anchored panels: Research ML, sources, performance, promotion, calibration, reliability, history, run log |
 
 ### Typical fixture day (Today)
@@ -55,6 +55,8 @@ Model edge: enable **Allow model edge** on Today only when calibration evidence 
 
 - Mode is locked **PAPER_ONLY** (colophon). No live capital path.
 - No live-wagering UX labels or live-approved mode strings in source (CI greps the operator-web tree).
+- First-run **ComplianceGate** requires age + jurisdiction + paper-only acknowledgment (App Store / distribution posture).
+- See [docs/APP_STORE_READINESS.md](../../docs/APP_STORE_READINESS.md) and [docs/legal/](../../docs/legal/README.md).
 - Prefer utility classes from `globals.css` — no ad-hoc spacing inventing outside tokens.
 
 ## Related

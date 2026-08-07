@@ -650,7 +650,7 @@ export default function HealthPage() {
             },
             {
               key: "roi",
-              header: "sim_roi",
+              header: "sim_roi (paper)",
               align: "right" as const,
               tabular: true,
               render: (r: ReliabilityRow) => r.roi,

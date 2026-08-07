@@ -50,9 +50,11 @@ jobs:
         run: npm run lint
       - name: Build
         run: npm run build
-      - name: Guardrail — no live UX
+      - name: Guardrail — no live UX / App Store risk phrases
         run: |
-          if grep -RInE 'Place bet|LIVE_APPROVED|placeBet' --exclude-dir=node_modules --exclude-dir=.next .; then
-            echo "Forbidden live UX strings found" >&2
+          # Live execution + real-money rails (product law + App Store 5.3 posture)
+          if grep -RInE 'Place bet|LIVE_APPROVED|placeBet|Cash out|Deposit now|Withdraw funds|Sure bet|Guaranteed profit|Guaranteed ROI' \
+            --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git .; then
+            echo "Forbidden live / guarantee UX strings found" >&2
             exit 1
           fi

@@ -324,21 +324,21 @@ export default function BookPage() {
     },
     {
       key: "paper_stake",
-      header: "Stake",
+      header: "Paper stake (sim)",
       align: "right",
       tabular: true,
       render: (r) => fmtNum(r.paper_stake, 2),
     },
     {
       key: "expected_value",
-      header: "EV",
+      header: "EV (sim)",
       align: "right",
       tabular: true,
       render: (r) => fmtNum(r.expected_value),
     },
     {
       key: "settled_value",
-      header: "Settled",
+      header: "Settled (sim)",
       align: "right",
       tabular: true,
       render: (r) => fmtNum(r.settled_value, 2),
@@ -496,7 +496,7 @@ export default function BookPage() {
   return (
     <>
       <header className="page-header">
-        <h1>Book</h1>
+        <h1>Paper book</h1>
         <div className="actions-row">
           <AuthorityChip
             label={competitionStatus}
@@ -519,8 +519,9 @@ export default function BookPage() {
       </header>
 
       <p className="lede" role="note">
-        Advisory candidates only — paper sim scores advice quality. No real
-        money. No book placement.
+        <strong>Paper book</strong> — advisory candidates only. Ticket stakes and
+        PnL are <strong>simulation</strong> scores for advice quality, not real
+        money. This is <strong>not</strong> a sportsbook and cannot place wagers.
       </p>
 
       <section className="section" aria-label="Candidates">
