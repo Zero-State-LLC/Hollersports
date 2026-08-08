@@ -225,3 +225,30 @@ def test_v06_recovery_requires_explicit_peer_and_fails_closed_without_samples(tm
         assert result.status_code == 200
         assert result.json()["status"] == "NOT_COMPUTABLE"
         assert result.json()["capital_authority"] is False
+
+
+def test_v06_dependency_persistence_replay_and_health(tmp_path):
+    observation = {
+        "observation_id": "dependency-1", "event_id": "event-1", "parlay_id": "parlay-1",
+        "observed_at": "2026-01-01T10:00:00Z", "recorded_at": "2026-01-01T10:01:00Z",
+        "source": "fixture", "source_hash": "dependency-source-hash",
+        "legs": [{"leg_id": "a", "marginal_probability": 0.6}, {"leg_id": "b", "marginal_probability": 0.5}],
+        "method": "INDEPENDENT_EXPLICITLY_ALLOWED", "explicitly_allow_independence": True,
+    }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        recorded = client.post("/v1/dependency/observations", json={"observation": observation, "analysis_id": "analysis-1", "analyzed_at": "2026-01-01T10:05:00Z"})
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["status"] == "COMPUTABLE"
+        assert recorded.json()["execution_authority"] is False
+
+        early = client.get("/v1/dependency/event-1/parlay-1", params={"at_or_before": "2026-01-01T10:03:00Z"}).json()
+        assert early["status"] == "NOT_COMPUTABLE"
+        assert early["evidence"]["dependency"]["source_hash"] == "dependency-source-hash"
+        replay = client.get("/v1/dependency/event-1/parlay-1", params={"at_or_before": "2026-01-01T10:05:00Z"}).json()
+        assert replay["status"] == "COMPUTABLE"
+        assert replay["analysis"]["analysis"]["joint"]["joint_probability"] == 0.3
+        assert replay["evidence"]["market"] is None
+
+        health = client.get("/v1/health/dependency").json()
+        assert health["status"] == "PASS"
+        assert health["integrity_issues"] == []

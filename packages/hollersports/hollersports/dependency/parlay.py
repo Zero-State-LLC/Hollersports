@@ -16,6 +16,7 @@ class ParlayAnalysis(AdvisoryModel):
     status: Computability
     joint: JointProbabilityResult
     correlation_tax: float | None = None
+    dependency_benefit: float | None = None
     correlation_tax_decomposition: dict[str, float] = Field(default_factory=dict)
     marginal_leg_values: list[MarginalLegValue] = Field(default_factory=list)
     reason: str | None = None
@@ -32,4 +33,4 @@ def analyze_parlay(legs: list[LegProbability], edges: list[DependencyEdge] | Non
             marginals.append(MarginalLegValue(leg_id=leg.leg_id, with_leg_probability=joint.joint_probability, without_leg_probability=without, delta_probability=(joint.joint_probability - (without or 0.0)), status=Computability.COMPUTABLE))
     else:
         marginals = [MarginalLegValue(leg_id=leg.leg_id, reason="marginal leg value requires recomputable evidence for subset; independent-only subset supported") for leg in legs]
-    return ParlayAnalysis(status=Computability.COMPUTABLE, joint=joint, correlation_tax=joint.correlation_tax, correlation_tax_decomposition=joint.decomposition, marginal_leg_values=marginals)
+    return ParlayAnalysis(status=Computability.COMPUTABLE, joint=joint, correlation_tax=joint.correlation_tax, dependency_benefit=joint.dependency_benefit, correlation_tax_decomposition=joint.decomposition, marginal_leg_values=marginals)

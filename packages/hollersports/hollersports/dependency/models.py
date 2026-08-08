@@ -20,7 +20,7 @@ def bound_probability(value: float) -> float:
     return float(value)
 
 class AdvisoryModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     capital_authority: bool = False
     execution_authority: bool = False
     authority: str = Authority.SHADOW_ONLY.value
@@ -34,7 +34,7 @@ class AdvisoryModel(BaseModel):
         return self
 
 class LegProbability(AdvisoryModel):
-    leg_id: str
+    leg_id: str = Field(min_length=1)
     marginal_probability: float
     evidence: dict[str, Any] = Field(default_factory=dict)
     @field_validator("marginal_probability")
@@ -43,8 +43,8 @@ class LegProbability(AdvisoryModel):
         return bound_probability(value)
 
 class DependencyEdge(AdvisoryModel):
-    source_leg_id: str
-    target_leg_id: str
+    source_leg_id: str = Field(min_length=1)
+    target_leg_id: str = Field(min_length=1)
     dependency_type: Literal["required", "informative", "shared_driver"] = "informative"
     weight: float = 0.0
     evidence: dict[str, Any] = Field(default_factory=dict)
@@ -66,7 +66,7 @@ class EmpiricalConditionalEvidence(AdvisoryModel):
         return {key: bound_probability(prob) for key, prob in value.items()}
 
 class DriverScenario(AdvisoryModel):
-    scenario_id: str
+    scenario_id: str = Field(min_length=1)
     probability: float
     leg_probabilities: dict[str, float]
     @field_validator("probability")
@@ -85,6 +85,7 @@ class JointProbabilityResult(AdvisoryModel):
     reason: str | None = None
     marginal_cap: float | None = None
     correlation_tax: float | None = None
+    dependency_benefit: float | None = None
     decomposition: dict[str, float] = Field(default_factory=dict)
     @model_validator(mode="after")
     def _bounded_joint(self):
@@ -94,4 +95,6 @@ class JointProbabilityResult(AdvisoryModel):
                 raise ValueError("joint probability cannot exceed any marginal probability")
         if self.correlation_tax is not None and self.correlation_tax < -1e-12:
             raise ValueError("correlation tax cannot be negative")
+        if self.dependency_benefit is not None and self.dependency_benefit < -1e-12:
+            raise ValueError("dependency benefit cannot be negative")
         return self

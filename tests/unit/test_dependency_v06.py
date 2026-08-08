@@ -1,8 +1,11 @@
+import pytest
+
 from hollersports.dependency import (
     Computability,
     DependencyEdge,
     DependencyMethod,
     LegProbability,
+    EmpiricalConditionalEvidence,
     analyze_parlay,
     joint_probability,
 )
@@ -45,5 +48,28 @@ def test_missing_required_dependency_fails_closed():
         ],
         method=DependencyMethod.INDEPENDENT,
         explicitly_allow_independence=True,
+    )
+    assert result.status == Computability.NOT_COMPUTABLE
+
+
+def test_empirical_positive_dependency_reports_benefit_not_tax():
+    result = joint_probability(
+        _legs(), method=DependencyMethod.EMPIRICAL_CONDITIONAL,
+        empirical_evidence=EmpiricalConditionalEvidence(
+            ordered_leg_ids=["a", "b"], conditional_probabilities={"a": 0.6, "b|a": 0.8}, sample_size=100,
+        ),
+    )
+    assert result.status == Computability.COMPUTABLE
+    assert result.joint_probability == 0.48
+    assert result.dependency_benefit == pytest.approx(0.18)
+    assert result.correlation_tax == 0.0
+
+
+def test_empirical_dependency_without_sample_size_fails_closed():
+    result = joint_probability(
+        _legs(), method=DependencyMethod.EMPIRICAL_CONDITIONAL,
+        empirical_evidence=EmpiricalConditionalEvidence(
+            ordered_leg_ids=["a", "b"], conditional_probabilities={"a": 0.6, "b|a": 0.8},
+        ),
     )
     assert result.status == Computability.NOT_COMPUTABLE

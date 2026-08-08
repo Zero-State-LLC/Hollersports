@@ -34,6 +34,9 @@ from hollersports.context import (
     compute_venue_residual,
 )
 from hollersports.dependency import (
+    DependencyObservation,
+    DependencyStorageError,
+    DependencyStore,
     DependencyEdge,
     DependencyMethod,
     DriverScenario,
@@ -78,6 +81,10 @@ def _prop_store(request: Request) -> PropPersistenceStore:
 
 def _context_store(request: Request) -> ContextStore:
     return ContextStore(request.app.state.data_root)
+
+
+def _dependency_store(request: Request) -> DependencyStore:
+    return DependencyStore(request.app.state.data_root)
 
 
 class SingleAnalysisRequest(BaseModel):
@@ -138,6 +145,12 @@ class ContextObservationRequest(BaseModel):
 class RecoveryAnalysisRequest(BaseModel):
     player: PlayerState
     peer: PlayerState
+
+
+class DependencyObservationRequest(BaseModel):
+    observation: DependencyObservation
+    analysis_id: str = Field(min_length=1)
+    analyzed_at: datetime
 
 
 @router.post("/markets/snapshots")
@@ -285,6 +298,36 @@ def parlay_analysis(body: ParlayAnalysisRequest) -> dict[str, Any]:
         driver_scenarios=body.driver_scenarios,
     )
     return _envelope(schema_version="parlay_analysis.v1", **result.model_dump(mode="json"))
+
+
+@router.post("/dependency/observations")
+def record_dependency_observation(body: DependencyObservationRequest, request: Request) -> dict[str, Any]:
+    store = _dependency_store(request)
+    try:
+        analysis = store.derive(body.observation, body.analysis_id, body.analyzed_at)
+        observation_fingerprint, analysis_fingerprint = store.append_bundle(body.observation, analysis)
+    except (DependencyStorageError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(
+        schema_version="DependencyPersistenceReceipt.v1", status=analysis.analysis.status.value,
+        observation_id=body.observation.observation_id, analysis_id=analysis.analysis_id,
+        observation_fingerprint=observation_fingerprint, analysis_fingerprint=analysis_fingerprint,
+    )
+
+
+@router.get("/dependency/{event_id}/{parlay_id}")
+def get_dependency_analysis(event_id: str, parlay_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
+    found = _dependency_store(request).latest_at_or_before(event_id, parlay_id, at_or_before or datetime.now(timezone.utc))
+    if found is None:
+        return _envelope(schema_version="DependencyReplayPacket.v1", status="NOT_COMPUTABLE", reason="no dependency observation at or before cutoff")
+    observation, analysis = found
+    return _envelope(
+        schema_version="DependencyReplayPacket.v1",
+        status=analysis.analysis.status.value if analysis is not None else "NOT_COMPUTABLE",
+        evidence={"dependency": observation.model_dump(mode="json"), "bookmaker": None, "market": None, "context": None, "player": None},
+        analysis=analysis.model_dump(mode="json") if analysis is not None else None,
+        reason=None if analysis is not None else "no dependency analysis available at or before cutoff",
+    )
 
 
 @router.post("/props/surface")
@@ -441,8 +484,20 @@ def bookmaker_health(request: Request) -> dict[str, Any]:
 
 
 @router.get("/health/dependency")
-def dependency_health() -> dict[str, Any]:
-    return _envelope(schema_version="DependencyHealthPacket.v1", status="PASS", unknown_dependency_policy="NOT_COMPUTABLE", naive_multiplication_default=False)
+def dependency_health(request: Request) -> dict[str, Any]:
+    store = _dependency_store(request)
+    try:
+        observations = store.observations()
+        analyses = store.analyses()
+        issues = store.integrity_issues()
+    except (ValueError, OSError) as exc:
+        return _envelope(schema_version="DependencyHealthPacket.v1", status="NOT_COMPUTABLE", integrity_issues=[f"unreadable dependency ledger: {exc}"], unknown_dependency_policy="NOT_COMPUTABLE", naive_multiplication_default=False)
+    return _envelope(
+        schema_version="DependencyHealthPacket.v1", status="PASS" if not issues else "NOT_COMPUTABLE",
+        observation_count=len(observations), analysis_count=len(analyses), integrity_issues=issues,
+        recorded_at_gate=True, api_bundled_write_lock=True,
+        unknown_dependency_policy="NOT_COMPUTABLE", naive_multiplication_default=False,
+    )
 
 
 @router.get("/health/context")
