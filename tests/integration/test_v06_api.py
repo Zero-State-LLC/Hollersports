@@ -175,3 +175,39 @@ def test_v06_fingerprint_and_backtest_require_evidence(tmp_path):
         assert body["status"] == "NOT_COMPUTABLE"
         assert all(metric["status"] == "NOT_COMPUTABLE" for metric in body["metrics"])
         assert body["capital_authority"] is False
+
+
+def test_v06_context_persistence_temporal_replay_and_evidence_separation(tmp_path):
+    observation = {
+        "observation_id": "context-1", "event_id": "event-1", "entity_id": "team-a",
+        "context_type": "TRAVEL", "observed_at": "2026-01-01T10:00:00Z",
+        "source": "fixture", "source_hash": "context-source-hash",
+        "payload": {
+            "team_id": "team-a", "miles_last_72h": 1200, "timezone_delta_hours": 2,
+            "rest_hours": 28, "controlled_sample_size": 5, "history_sample_size": 10,
+            "provenance": [{"source": "fixture", "observed_at": "2026-01-01T10:00:00Z"}],
+        },
+    }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        recorded = client.post("/v1/context/observations", json={"observation": observation, "derivation_id": "context-derived-1", "derived_at": "2026-01-01T10:05:00Z"})
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["status"] == "COMPUTED"
+        assert recorded.json()["execution_authority"] is False
+
+        early = client.get("/v1/context/event-1/team-a/TRAVEL", params={"at_or_before": "2026-01-01T10:02:00Z"}).json()
+        assert early["status"] == "NOT_COMPUTABLE"
+        assert early["evidence"]["context"]["source_hash"] == "context-source-hash"
+        replay = client.get("/v1/context/event-1/team-a/TRAVEL", params={"at_or_before": "2026-01-01T10:05:00Z"}).json()
+        assert replay["status"] == "COMPUTED"
+        assert replay["evidence"]["bookmaker"] is None
+        assert replay["evidence"]["dependency"] is None
+
+
+def test_v06_recovery_requires_explicit_peer_and_fails_closed_without_samples(tmp_path):
+    player = {"player_id": "player-a", "rest_hours": 48, "controlled_sample_size": 0, "history_sample_size": 0}
+    peer = {"player_id": "player-b", "rest_hours": 24, "controlled_sample_size": 0, "history_sample_size": 0}
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        result = client.post("/v1/context/recovery", json={"player": player, "peer": peer})
+        assert result.status_code == 200
+        assert result.json()["status"] == "NOT_COMPUTABLE"
+        assert result.json()["capital_authority"] is False

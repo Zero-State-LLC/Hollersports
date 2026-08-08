@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 ContextMode = Literal["SHADOW_ONLY"]
@@ -24,6 +24,15 @@ class Provenance(BaseModel):
     observed_at: datetime | None = None
     quality: EvidenceQuality = EvidenceQuality.DIRECT
     notes: str | None = None
+
+    @field_validator("observed_at")
+    @classmethod
+    def timezone_aware(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("provenance observed_at must be timezone-aware")
+        return value.astimezone(timezone.utc)
 
 
 class Confidence(BaseModel):
@@ -47,6 +56,12 @@ class ContextResult(BaseModel):
     confidence: Confidence
     provenance: list[Provenance] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def advisory_only(self) -> "ContextResult":
+        if self.mode != "SHADOW_ONLY" or self.capital_authority or self.execution_authority:
+            raise ValueError("context results are SHADOW_ONLY without capital or execution authority")
+        return self
 
 
 class PlayerState(BaseModel):

@@ -18,6 +18,21 @@ from hollersports.bookmaker.consensus import consensus_summary, weighted_consens
 from hollersports.bookmaker.devig import devig
 from hollersports.bookmaker.fingerprint import bookmaker_fingerprint
 from hollersports.bookmaker.pricing_residual import pricing_residuals
+from hollersports.context import (
+    ContextDerivation,
+    ContextObservation,
+    ContextResult,
+    Confidence,
+    ContextStorageError,
+    ContextStore,
+    DuplicateContextObservationError,
+    PlayerState,
+    compute_coach_response,
+    compute_opportunity_shift,
+    compute_relative_recovery_advantage,
+    compute_travel_load,
+    compute_venue_residual,
+)
 from hollersports.dependency import (
     DependencyEdge,
     DependencyMethod,
@@ -59,6 +74,10 @@ def _snapshot_store(request: Request) -> MarketSnapshotStore:
 
 def _prop_store(request: Request) -> PropPersistenceStore:
     return PropPersistenceStore(request.app.state.data_root)
+
+
+def _context_store(request: Request) -> ContextStore:
+    return ContextStore(request.app.state.data_root)
 
 
 class SingleAnalysisRequest(BaseModel):
@@ -108,6 +127,17 @@ class PropObservationRequest(BaseModel):
     observation: PropLadderObservation
     surface_id: str = Field(min_length=1)
     derived_at: datetime
+
+
+class ContextObservationRequest(BaseModel):
+    observation: ContextObservation
+    derivation_id: str = Field(min_length=1)
+    derived_at: datetime
+
+
+class RecoveryAnalysisRequest(BaseModel):
+    player: PlayerState
+    peer: PlayerState
 
 
 @router.post("/markets/snapshots")
@@ -330,6 +360,73 @@ def get_prop_analysis(market_id: str, request: Request, at_or_before: datetime |
         surface=surface.model_dump(mode="json") if surface is not None else None,
         reason=None if surface is not None else "no derived surface available at or before cutoff",
     )
+
+
+def _derive_context(observation: ContextObservation):
+    if observation.context_type == "TRAVEL":
+        return compute_travel_load(observation.payload)
+    if observation.context_type == "OPPORTUNITY":
+        return compute_opportunity_shift(observation.payload)
+    if observation.context_type == "COACHING":
+        return compute_coach_response(observation.payload)
+    if observation.context_type == "VENUE":
+        return compute_venue_residual(observation.payload)
+    return ContextResult(
+        status="NOT_COMPUTABLE",
+        signal="player_state_transform",
+        confidence=Confidence(value=0.0, sample_size=0, method="observation_only"),
+        provenance=observation.payload.provenance,
+        reasons=["player state is evidence only; no calibrated distribution transform is promoted"],
+    )
+
+
+@router.post("/context/observations")
+def record_context_observation(body: ContextObservationRequest, request: Request) -> dict[str, Any]:
+    store = _context_store(request)
+    result = _derive_context(body.observation)
+    try:
+        if any(item.observation_id == body.observation.observation_id for item in store.observations()):
+            raise DuplicateContextObservationError(f"duplicate observation_id: {body.observation.observation_id}")
+        if any(item.derivation_id == body.derivation_id for item in store.derivations()):
+            raise ContextStorageError(f"duplicate derivation_id: {body.derivation_id}")
+        derivation = ContextDerivation(
+            derivation_id=body.derivation_id,
+            observation_id=body.observation.observation_id,
+            observation_fingerprint=body.observation.fingerprint,
+            event_id=body.observation.event_id,
+            entity_id=body.observation.entity_id,
+            context_type=body.observation.context_type,
+            observed_at=body.observation.observed_at,
+            derived_at=body.derived_at,
+            result=result,
+        )
+        fingerprint = store.append_observation(body.observation)
+        store.append_derivation(derivation)
+    except (ContextStorageError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(schema_version="ContextPersistenceReceipt.v1", status=result.status, observation_fingerprint=fingerprint, derivation=derivation.model_dump(mode="json"))
+
+
+@router.get("/context/{event_id}/{entity_id}/{context_type}")
+def get_context_analysis(event_id: str, entity_id: str, context_type: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
+    if context_type not in {"PLAYER", "TRAVEL", "OPPORTUNITY", "COACHING", "VENUE"}:
+        raise HTTPException(status_code=422, detail="unsupported context_type")
+    found = _context_store(request).latest_at_or_before(event_id=event_id, entity_id=entity_id, context_type=context_type, as_of=at_or_before or datetime.now(timezone.utc))
+    if found is None:
+        return _envelope(schema_version="ContextAnalysisPacket.v1", status="NOT_COMPUTABLE", reason="no context observation at or before cutoff")
+    observation, derivation = found
+    return _envelope(
+        schema_version="ContextAnalysisPacket.v1",
+        status=derivation.result.status if derivation is not None else "NOT_COMPUTABLE",
+        evidence={"context": observation.model_dump(mode="json"), "bookmaker": None, "market": None, "player": observation.payload.model_dump(mode="json") if context_type == "PLAYER" else None, "dependency": None},
+        derivation=derivation.model_dump(mode="json") if derivation is not None else None,
+        reason=None if derivation is not None else "no derivation available at or before cutoff",
+    )
+
+
+@router.post("/context/recovery")
+def analyze_recovery(body: RecoveryAnalysisRequest) -> dict[str, Any]:
+    return _envelope(schema_version="RecoveryContextPacket.v1", **compute_relative_recovery_advantage(body.player, body.peer).model_dump(mode="json"))
 
 
 @router.post("/structural-verdict")
