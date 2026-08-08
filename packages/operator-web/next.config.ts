@@ -6,6 +6,9 @@ const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "Hollersp
 const basePath = isGitHubPages ? `/${repositoryName}` : "";
 
 const nextConfig: NextConfig = {
+  // The monorepo has lockfiles above this package. Pin tracing here so Next
+  // does not infer an unrelated workspace root during local or Pages builds.
+  outputFileTracingRoot: process.cwd(),
   ...(isGitHubPages
     ? {
         output: "export" as const,
