@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hollersports.bookmaker import BacktestRow, BookmakerQuote, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market
+from hollersports.bookmaker import BacktestRow, BookmakerQuote, FingerprintStore, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market
 from hollersports.bookmaker.backtest import compute_backtest_metrics
 from hollersports.bookmaker.consensus import consensus_summary, weighted_consensus
 from hollersports.bookmaker.devig import devig
@@ -114,6 +114,13 @@ class FingerprintRequest(BaseModel):
     ece_bins: int = Field(default=10, ge=1, le=100)
 
 
+class FingerprintPromotionRequest(FingerprintRequest):
+    fingerprint_id: str = Field(min_length=1)
+    market_class: str = Field(min_length=1)
+    as_of: datetime
+    computed_at: datetime
+
+
 class BacktestRequest(BaseModel):
     rows: list[BacktestRow]
     minimum_sample: int = Field(default=20, ge=1)
@@ -204,10 +211,21 @@ def list_books(request: Request) -> dict[str, Any]:
 
 
 @router.get("/books/{book_id}/fingerprint")
-def get_book_fingerprint(book_id: str, request: Request) -> dict[str, Any]:
+def get_book_fingerprint(book_id: str, request: Request, market_class: str | None = None, at_or_before: datetime | None = None) -> dict[str, Any]:
+    try:
+        promoted = FingerprintStore(request.app.state.data_root).query(bookmaker=book_id, market_class=market_class, at_or_before=at_or_before)
+    except (ValueError, OSError) as exc:
+        return _envelope(
+            schema_version="BookmakerFingerprintPacket.v1",
+            status="NOT_COMPUTABLE",
+            book_id=book_id,
+            reason=f"fingerprint ledger unavailable: {exc}",
+        )
+    if promoted:
+        return promoted[-1].model_dump(mode="json")
     observations = [
         quote
-        for snapshot in _snapshot_store(request).query()
+        for snapshot in _snapshot_store(request).query(end_at=at_or_before)
         for quote in snapshot.quotes
         if quote.bookmaker == book_id
     ]
@@ -217,6 +235,48 @@ def get_book_fingerprint(book_id: str, request: Request) -> dict[str, Any]:
         book_id=book_id,
         observed_quotes=len(observations),
         reason="settled and closing calibration samples are required for a bookmaker fingerprint",
+    )
+
+
+@router.post("/books/{book_id}/fingerprint/promote")
+def promote_book_fingerprint(book_id: str, body: FingerprintPromotionRequest, request: Request) -> dict[str, Any]:
+    fingerprint = bookmaker_fingerprint(book_id, body.rows, minimum_sample=body.minimum_sample, ece_bins=body.ece_bins)
+    if fingerprint.status != "COMPUTED":
+        return _envelope(
+            schema_version="BookmakerFingerprintPromotion.v1",
+            status="NOT_COMPUTABLE",
+            bookmaker=book_id,
+            reason=fingerprint.reason,
+            fingerprint=fingerprint.model_dump(mode="json"),
+        )
+    try:
+        record = FingerprintStore(request.app.state.data_root).append(
+            fingerprint_id=body.fingerprint_id,
+            bookmaker=book_id,
+            market_class=body.market_class,
+            as_of=body.as_of,
+            computed_at=body.computed_at,
+            fingerprint=fingerprint,
+            evidence_rows=body.rows,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return record.model_dump(mode="json")
+
+
+@router.get("/health/bookmaker-fingerprints")
+def fingerprint_health(request: Request) -> dict[str, Any]:
+    store = FingerprintStore(request.app.state.data_root)
+    issues = store.integrity_issues()
+    try:
+        count = len(store.records())
+    except (ValueError, OSError):
+        count = 0
+    return _envelope(
+        schema_version="BookmakerFingerprintHealth.v1",
+        status="PASS" if not issues else "NOT_COMPUTABLE",
+        promotion_count=count,
+        integrity_issues=issues,
     )
 
 

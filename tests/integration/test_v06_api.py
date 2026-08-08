@@ -187,6 +187,40 @@ def test_v06_fingerprint_and_backtest_require_evidence(tmp_path):
         assert fingerprint.status_code == 200
         assert fingerprint.json()["status"] == "NOT_COMPUTABLE"
 
+
+def test_v06_promotes_and_replays_evidence_bound_book_fingerprint(tmp_path):
+    rows = [
+        {"bookmaker": "book-a", "probability": 0.6, "outcome": 1, "hold": 0.04, "source": "settlement", "source_hash": "a", "available_at": "2026-01-01T20:00:00Z"},
+        {"bookmaker": "book-a", "probability": 0.4, "outcome": 0, "hold": 0.05, "source": "settlement", "source_hash": "b", "available_at": "2026-01-01T21:00:00Z"},
+    ]
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        promoted = client.post("/v1/books/book-a/fingerprint/promote", json={
+            "fingerprint_id": "fp-api-1", "market_class": "NBA/PLAYER_PROP/POINTS",
+            "as_of": "2026-01-02T00:00:00Z", "computed_at": "2026-01-02T00:01:00Z",
+            "minimum_sample": 2, "rows": rows,
+        })
+        assert promoted.status_code == 200, promoted.text
+        assert promoted.json()["fingerprint"]["status"] == "COMPUTED"
+        before = client.get("/v1/books/book-a/fingerprint", params={
+            "market_class": "NBA/PLAYER_PROP/POINTS", "at_or_before": "2026-01-01T23:59:00Z",
+        }).json()
+        assert before["status"] == "NOT_COMPUTABLE"
+        replay = client.get("/v1/books/book-a/fingerprint", params={
+            "market_class": "NBA/PLAYER_PROP/POINTS", "at_or_before": "2026-01-02T00:01:00Z",
+        }).json()
+        assert replay["fingerprint_id"] == "fp-api-1"
+        health = client.get("/v1/health/bookmaker-fingerprints").json()
+        assert health["status"] == "PASS"
+        assert health["promotion_count"] == 1
+
+        future = {**rows[1], "available_at": "2026-01-03T00:00:00Z", "source_hash": "future"}
+        rejected = client.post("/v1/books/book-a/fingerprint/promote", json={
+            "fingerprint_id": "fp-api-2", "market_class": "NBA/PLAYER_PROP/POINTS",
+            "as_of": "2026-01-02T00:00:00Z", "computed_at": "2026-01-02T00:01:00Z",
+            "minimum_sample": 2, "rows": [rows[0], future],
+        })
+        assert rejected.status_code == 409
+
         backtest = client.post(
             "/v1/backtest/bookmaker",
             json={

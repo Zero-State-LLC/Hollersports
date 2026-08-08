@@ -10,6 +10,7 @@ from .models import (
 )
 from .storage import MarketSnapshotStore, append_snapshot, query_snapshots
 from .longitudinal import LongitudinalAnalysis, LongitudinalStore, LongitudinalThresholds, analyze_longitudinal_market
+from .fingerprint_storage import FingerprintPromotionRecord, FingerprintStore
 
 __all__ = [
     "BacktestMetric",
@@ -18,6 +19,8 @@ __all__ = [
     "BookmakerQuote",
     "ConsensusResult",
     "DevigResult",
+    "FingerprintPromotionRecord",
+    "FingerprintStore",
     "MarketSnapshotV2",
     "LongitudinalAnalysis",
     "LongitudinalStore",
