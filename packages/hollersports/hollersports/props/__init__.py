@@ -5,10 +5,12 @@ from .role import role_stability
 from .surface import BoundedMomentEstimate, QuantileEstimate, SurvivalPoint, SurvivalSurface, reconstruct_survival
 from .storage import DerivedPropSurfaceObservation, DuplicateObservationError, DuplicateSurfaceError, PropLadderObservation, PropPersistenceStore, PropStorageError, stable_fingerprint
 from .tail_tax import compute_curvature, compute_tail_tax
+from .backtest import PropBacktestMetric, PropSurfaceBacktestResult, PropSurfaceBacktestRow, PropSurfaceForecastPoint, backtest_prop_surfaces
 
 __all__ = [
     "ComputationStatus", "Diagnostic", "GovernanceMode", "PropLadder", "PropSide", "PropThreshold", "PropsResult",
     "SurvivalPoint", "SurvivalSurface", "QuantileEstimate", "BoundedMomentEstimate", "validate_ladder", "reconstruct_survival", "compute_curvature", "compute_tail_tax",
     "PairwiseDistributionConflict", "distribution_conflict", "pairwise_distribution_conflicts", "role_stability",
     "DerivedPropSurfaceObservation", "DuplicateObservationError", "DuplicateSurfaceError", "PropLadderObservation", "PropPersistenceStore", "PropStorageError", "stable_fingerprint",
+    "PropBacktestMetric", "PropSurfaceBacktestResult", "PropSurfaceBacktestRow", "PropSurfaceForecastPoint", "backtest_prop_surfaces",
 ]

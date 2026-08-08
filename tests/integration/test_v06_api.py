@@ -123,6 +123,36 @@ def test_v06_joint_backtest_compares_modeled_probability_to_independence(tmp_pat
         assert body["capital_authority"] is False
 
 
+def test_v06_prop_surface_backtest_emits_gate_d_metrics(tmp_path):
+    def settled(row_id, actual):
+        return {
+            "row_id": row_id, "event_id": f"event-{row_id}", "player_id": f"player-{row_id}",
+            "stat_type": "POINTS", "market_class": "NBA/PLAYER_PROP/POINTS", "model_id": "prop-v1",
+            "points": [
+                {"threshold": 10, "survival_probability": 0.75},
+                {"threshold": 20, "survival_probability": 0.50},
+                {"threshold": 30, "survival_probability": 0.25},
+            ],
+            "actual_value": actual, "prediction_evidence_at": "2026-01-01T19:59:00Z",
+            "predicted_at": "2026-01-01T20:00:00Z", "available_at": "2026-01-02T00:00:00Z",
+            "prediction_source": "surface-model", "prediction_source_hash": f"model-{row_id}",
+            "settlement_source": "settlement", "settlement_source_hash": f"settled-{row_id}",
+        }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        response = client.post("/v1/backtest/props", json={
+            "rows": [settled("1", 35), settled("2", 25), settled("3", 15), settled("4", 5)],
+            "market_class": "NBA/PLAYER_PROP/POINTS", "model_id": "prop-v1",
+            "as_of": "2026-01-02T01:00:00Z", "minimum_sample": 4, "calibration_bins": 4,
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "COMPUTED"
+        assert body["monotonic_violation_rate"]["value"] == 0
+        assert body["calibration_error"]["value"] == 0
+        assert body["threshold_forecast_count"] == 12
+        assert body["execution_authority"] is False
+
+
 def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
     def snapshot(snapshot_id, minute, a_probability, b_probability, *, pressure=False):
         quotes = []

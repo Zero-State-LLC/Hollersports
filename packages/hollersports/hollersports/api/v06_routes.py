@@ -54,6 +54,8 @@ from hollersports.props import (
     PropLadderObservation,
     PropPersistenceStore,
     PropStorageError,
+    PropSurfaceBacktestRow,
+    backtest_prop_surfaces,
     compute_curvature,
     compute_tail_tax,
     reconstruct_survival,
@@ -147,6 +149,15 @@ class JointBacktestRequest(BaseModel):
     model_id: str = Field(min_length=1)
     as_of: datetime
     minimum_sample: int = Field(default=20, ge=1)
+
+
+class PropBacktestRequest(BaseModel):
+    rows: list[PropSurfaceBacktestRow]
+    market_class: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    as_of: datetime
+    minimum_sample: int = Field(default=20, ge=1)
+    calibration_bins: int = Field(default=10, ge=1, le=100)
 
 
 class LongitudinalRequest(BaseModel):
@@ -453,6 +464,19 @@ def backtest_joint(body: JointBacktestRequest) -> dict[str, Any]:
         model_id=body.model_id,
         as_of=body.as_of,
         minimum_sample=body.minimum_sample,
+    ).model_dump(mode="json")
+
+
+@router.post("/backtest/props")
+def backtest_props(body: PropBacktestRequest) -> dict[str, Any]:
+    """Score settled prop survival surfaces with no post-prediction evidence."""
+    return backtest_prop_surfaces(
+        body.rows,
+        market_class=body.market_class,
+        model_id=body.model_id,
+        as_of=body.as_of,
+        minimum_sample=body.minimum_sample,
+        calibration_bins=body.calibration_bins,
     ).model_dump(mode="json")
 
 
