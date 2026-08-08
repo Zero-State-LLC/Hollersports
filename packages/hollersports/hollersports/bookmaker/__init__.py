@@ -12,6 +12,7 @@ from .storage import MarketSnapshotStore, append_snapshot, query_snapshots
 from .longitudinal import LongitudinalAnalysis, LongitudinalStore, LongitudinalThresholds, analyze_longitudinal_market
 from .fingerprint_storage import FingerprintPromotionRecord, FingerprintStore
 from .devig_calibration import DevigCalibrationResult, DevigCalibrationRow, MethodCalibrationMetric, compare_devig_methods
+from .devig_calibration_storage import DevigCalibrationPromotionRecord, DevigCalibrationPromotionStore
 
 __all__ = [
     "BacktestMetric",
@@ -20,6 +21,8 @@ __all__ = [
     "BookmakerQuote",
     "ConsensusResult",
     "DevigResult",
+    "DevigCalibrationPromotionRecord",
+    "DevigCalibrationPromotionStore",
     "DevigCalibrationResult",
     "DevigCalibrationRow",
     "FingerprintPromotionRecord",
