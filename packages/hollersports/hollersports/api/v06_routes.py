@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hollersports.bookmaker import BacktestRow, BookmakerQuote, FingerprintStore, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market
+from hollersports.bookmaker import BacktestRow, BookmakerQuote, DevigCalibrationRow, FingerprintStore, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market, compare_devig_methods
 from hollersports.bookmaker.backtest import compute_backtest_metrics
 from hollersports.bookmaker.consensus import consensus_summary, weighted_consensus
 from hollersports.bookmaker.devig import devig
@@ -125,6 +125,17 @@ class BacktestRequest(BaseModel):
     rows: list[BacktestRow]
     minimum_sample: int = Field(default=20, ge=1)
     ece_bins: int = Field(default=10, ge=1, le=100)
+
+
+class DevigCalibrationRequest(BaseModel):
+    rows: list[DevigCalibrationRow]
+    bookmaker: str = Field(min_length=1)
+    sport: str = Field(min_length=1)
+    market_class: str = Field(min_length=1)
+    odds_bucket: str = Field(min_length=1)
+    as_of: datetime
+    minimum_sample: int = Field(default=20, ge=1)
+    method_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class LongitudinalRequest(BaseModel):
@@ -404,6 +415,21 @@ def backtest_bookmaker(body: BacktestRequest) -> dict[str, Any]:
         metrics=[metric.model_dump(mode="json") for metric in metrics],
         provenance={"closing_prices_required_where_applicable": True, "settled_outcomes_required_where_applicable": True},
     )
+
+
+@router.post("/backtest/devig")
+def backtest_devig(body: DevigCalibrationRequest) -> dict[str, Any]:
+    """Compare deterministic de-vig methods on evidence available by as_of."""
+    return compare_devig_methods(
+        body.rows,
+        bookmaker=body.bookmaker,
+        sport=body.sport,
+        market_class=body.market_class,
+        odds_bucket=body.odds_bucket,
+        as_of=body.as_of,
+        minimum_sample=body.minimum_sample,
+        method_parameters=body.method_parameters,
+    ).model_dump(mode="json")
 
 
 @router.post("/analyze/parlay")

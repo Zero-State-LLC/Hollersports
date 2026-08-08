@@ -68,6 +68,34 @@ def test_v06_single_reconstructs_fair_probability(tmp_path):
         assert unsupported.json()["status"] == "NOT_COMPUTABLE"
 
 
+def test_v06_devig_backtest_is_scoped_and_evidence_gated(tmp_path):
+    def calibration_row(row_id, winner):
+        return {
+            "row_id": row_id, "bookmaker": "book-a", "sport": "NBA",
+            "market_class": "NBA/MONEYLINE", "odds_bucket": "EVEN",
+            "outcomes": [
+                {"selection": "HOME", "observed_probability": 0.60},
+                {"selection": "AWAY", "observed_probability": 0.50},
+            ],
+            "winning_selection": winner, "observed_at": "2026-01-01T20:00:00Z",
+            "available_at": "2026-01-02T00:00:00Z", "source": "settlement",
+            "source_hash": f"hash-{row_id}",
+        }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        response = client.post("/v1/backtest/devig", json={
+            "rows": [calibration_row("one", "HOME"), calibration_row("two", "AWAY")],
+            "bookmaker": "book-a", "sport": "NBA", "market_class": "NBA/MONEYLINE",
+            "odds_bucket": "EVEN", "as_of": "2026-01-02T01:00:00Z",
+            "minimum_sample": 2, "method_parameters": {"SHIN": {"z": 0.02}},
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "COMPUTED"
+        assert body["preferred_method"] is not None
+        assert body["improvement_over_raw_brier"] > 0
+        assert body["execution_authority"] is False
+
+
 def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
     def snapshot(snapshot_id, minute, a_probability, b_probability, *, pressure=False):
         quotes = []

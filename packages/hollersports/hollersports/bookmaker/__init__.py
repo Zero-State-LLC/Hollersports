@@ -11,6 +11,7 @@ from .models import (
 from .storage import MarketSnapshotStore, append_snapshot, query_snapshots
 from .longitudinal import LongitudinalAnalysis, LongitudinalStore, LongitudinalThresholds, analyze_longitudinal_market
 from .fingerprint_storage import FingerprintPromotionRecord, FingerprintStore
+from .devig_calibration import DevigCalibrationResult, DevigCalibrationRow, MethodCalibrationMetric, compare_devig_methods
 
 __all__ = [
     "BacktestMetric",
@@ -19,16 +20,20 @@ __all__ = [
     "BookmakerQuote",
     "ConsensusResult",
     "DevigResult",
+    "DevigCalibrationResult",
+    "DevigCalibrationRow",
     "FingerprintPromotionRecord",
     "FingerprintStore",
     "MarketSnapshotV2",
     "LongitudinalAnalysis",
     "LongitudinalStore",
     "LongitudinalThresholds",
+    "MethodCalibrationMetric",
     "OutcomePrice",
     "MarketSnapshotStore",
     "append_snapshot",
     "analyze_longitudinal_market",
     "compute_backtest_metrics",
+    "compare_devig_methods",
     "query_snapshots",
 ]
