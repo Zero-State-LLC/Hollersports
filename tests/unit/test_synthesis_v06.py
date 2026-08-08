@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from hollersports.synthesis import (
     GateStatus, ReleaseGateEvidence, ReleaseGateThresholds, StructuralEvidenceObservation,
     SynthesisStore, evaluate_release_readiness,
@@ -46,6 +48,7 @@ def test_release_readiness_requires_every_gate_to_pass():
     assert [gate.gate for gate in packet.gates] == list("ABCDEFGH")
     assert all(gate.status == GateStatus.PASS for gate in packet.gates)
     assert packet.capital_authority is False
+    assert packet.mode == "ADVISORY_ONLY"
 
 
 def test_pass_gate_fails_when_pass_does_not_improve_calibration():
@@ -71,3 +74,29 @@ def test_structural_synthesis_persists_separate_deterministic_derivation(tmp_pat
     assert store.latest_at_or_before("market-1", datetime(2026, 1, 1, 10, 1, 30, tzinfo=timezone.utc)) == (observation, None)
     assert store.latest_at_or_before("market-1", datetime(2026, 1, 1, 10, 2, tzinfo=timezone.utc)) == (observation, analysis)
     assert store.integrity_issues() == []
+
+
+def test_synthesis_bundle_rolls_back_and_integrity_detects_tamper(tmp_path, monkeypatch):
+    store = SynthesisStore(tmp_path)
+    observation = structural_observation()
+    analysis = store.derive(observation, "analysis-1", datetime(2026, 1, 1, 10, 2, tzinfo=timezone.utc))
+    original = store._append
+    calls = 0
+
+    def fail_second(path, value):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated synthesis failure")
+        original(path, value)
+
+    monkeypatch.setattr(store, "_append", fail_second)
+    with pytest.raises(OSError, match="simulated"):
+        store.append_bundle(observation, analysis)
+    assert store.observations() == [] and store.analyses() == []
+
+    monkeypatch.setattr(store, "_append", original)
+    store.append_bundle(observation, analysis)
+    raw = store.analyses_path.read_text(encoding="utf-8").replace(analysis.observation_fingerprint, "0" * 64)
+    store.analyses_path.write_text(raw, encoding="utf-8")
+    assert any("source observation link is invalid" in issue for issue in store.integrity_issues())

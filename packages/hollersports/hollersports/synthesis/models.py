@@ -34,6 +34,7 @@ class StructuralEvidenceObservation(BaseModel):
     book_joint_probability: float | None = Field(default=None, ge=0, le=1)
     evidence_references: dict[str, str] = Field(default_factory=dict)
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
+    mode: Literal["ADVISORY_ONLY"] = "ADVISORY_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False
 
@@ -57,6 +58,8 @@ class StructuralEvidenceObservation(BaseModel):
             required_refs.add("dependency")
         if not required_refs.issubset(self.evidence_references):
             raise ValueError("evidence references must identify every required evidence family")
+        if any(not key.strip() or not value.strip() for key, value in self.evidence_references.items()):
+            raise ValueError("evidence reference keys and values must not be blank")
         return self
 
     def derive(self) -> dict[str, Any]:
@@ -132,5 +135,6 @@ class ReleaseReadinessPacket(BaseModel):
     status: Literal["READY", "NOT_READY"]
     gates: tuple[ReleaseGateResult, ...]
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
+    mode: Literal["ADVISORY_ONLY"] = "ADVISORY_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False

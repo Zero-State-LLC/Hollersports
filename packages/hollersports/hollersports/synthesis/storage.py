@@ -35,6 +35,7 @@ class StructuralAnalysisRecord(BaseModel):
     analyzed_at: datetime
     verdict_packet: dict[str, Any]
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
+    mode: Literal["ADVISORY_ONLY"] = "ADVISORY_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False
 

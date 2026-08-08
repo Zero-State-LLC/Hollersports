@@ -92,11 +92,15 @@ def structural_verdict(
         return _packet(StructuralVerdict.NOT_COMPUTABLE, ["book, consensus, and reality probabilities are required"], evidence)
     if not 0.0 <= data_quality <= 1.0 or not 0.0 <= market_entropy <= 1.0:
         return _packet(StructuralVerdict.NOT_COMPUTABLE, ["quality and entropy must be bounded"], evidence)
+    if context_confidence is not None and not 0.0 <= context_confidence <= 1.0:
+        return _packet(StructuralVerdict.NOT_COMPUTABLE, ["context confidence must be bounded"], evidence)
     if data_quality < thresholds.minimum_data_quality:
         return _packet(StructuralVerdict.NOT_COMPUTABLE, ["data quality below calibrated minimum"], evidence)
     if market_entropy > thresholds.maximum_market_entropy:
         return _packet(StructuralVerdict.PASS, ["market disagreement exceeds calibrated entropy limit"], evidence)
     if dependency_required:
+        if dependency_confidence is not None and not 0.0 <= dependency_confidence <= 1.0:
+            return _packet(StructuralVerdict.NOT_COMPUTABLE, ["dependency confidence must be bounded"], evidence)
         if dependency_confidence is None or dependency_confidence < thresholds.minimum_dependency_confidence:
             return _packet(StructuralVerdict.NOT_COMPUTABLE, ["dependency evidence is inadequate"], evidence)
         if joint_probability is None or book_joint_probability is None:

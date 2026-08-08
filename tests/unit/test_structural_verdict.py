@@ -72,3 +72,17 @@ def test_structural_verdict_separates_evidence_families():
         "dependency",
         "data_quality",
     }
+
+
+def test_structural_verdict_rejects_unbounded_context_and_dependency_confidence():
+    context = structural_verdict(
+        book_probability=0.55, consensus_probability=0.52, reality_probability=0.51,
+        data_quality=0.9, market_entropy=0.1, thresholds=THRESHOLDS, context_confidence=1.2,
+    )
+    assert context["verdict"] == "NOT_COMPUTABLE"
+    dependency = structural_verdict(
+        book_probability=0.55, consensus_probability=0.52, reality_probability=0.51,
+        data_quality=0.9, market_entropy=0.1, thresholds=THRESHOLDS,
+        dependency_required=True, dependency_confidence=1.2, joint_probability=0.2, book_joint_probability=0.2,
+    )
+    assert dependency["verdict"] == "NOT_COMPUTABLE"
