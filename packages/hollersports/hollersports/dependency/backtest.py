@@ -18,9 +18,13 @@ class JointBacktestRow(BaseModel):
     independent_probability: float = Field(ge=0, le=1)
     modeled_joint_probability: float = Field(ge=0, le=1)
     modeled_method: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
     outcome: int = Field(ge=0, le=1)
+    prediction_evidence_at: datetime
     predicted_at: datetime
     available_at: datetime
+    prediction_source: str = Field(min_length=1)
+    prediction_source_hash: str = Field(min_length=1)
     source: str = Field(min_length=1)
     source_hash: str = Field(min_length=1)
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
@@ -35,7 +39,7 @@ class JointBacktestRow(BaseModel):
             raise ValueError("leg marginals must be in [0, 1]")
         return values
 
-    @field_validator("predicted_at", "available_at")
+    @field_validator("prediction_evidence_at", "predicted_at", "available_at")
     @classmethod
     def aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
@@ -44,6 +48,8 @@ class JointBacktestRow(BaseModel):
 
     @model_validator(mode="after")
     def coherent(self) -> "JointBacktestRow":
+        if self.prediction_evidence_at > self.predicted_at:
+            raise ValueError("prediction evidence cannot postdate prediction")
         if self.available_at <= self.predicted_at:
             raise ValueError("settled outcome must become available after prediction")
         independent = math.prod(self.leg_marginals)
@@ -79,6 +85,7 @@ class JointBacktestResult(BaseModel):
     status: Literal["COMPUTED", "NOT_COMPUTABLE"]
     market_class: str
     modeled_method: str
+    model_id: str
     as_of: datetime
     minimum_sample: int = Field(ge=1)
     leg_count: int | None = Field(default=None, ge=2)
@@ -106,6 +113,7 @@ def backtest_joint_probabilities(
     *,
     market_class: str,
     modeled_method: str,
+    model_id: str,
     as_of: datetime,
     minimum_sample: int = 20,
 ) -> JointBacktestResult:
@@ -115,7 +123,7 @@ def backtest_joint_probabilities(
         raise ValueError("minimum_sample must be positive")
     cutoff = as_of.astimezone(timezone.utc)
     scoped = sorted(
-        (row for row in rows if row.market_class == market_class and row.modeled_method == modeled_method and row.available_at <= cutoff),
+        (row for row in rows if row.market_class == market_class and row.modeled_method == modeled_method and row.model_id == model_id and row.available_at <= cutoff),
         key=lambda row: (row.available_at, row.row_id),
     )
     duplicate_ids = len({row.row_id for row in scoped}) != len(scoped)
@@ -124,12 +132,12 @@ def backtest_joint_probabilities(
     if duplicate_ids or duplicate_sources or mixed_leg_counts:
         reason = "duplicate joint backtest row_id" if duplicate_ids else "duplicate joint source evidence" if duplicate_sources else "joint backtest cannot mix leg counts"
         empty = JointBacktestMetric(name="independent_brier", status="NOT_COMPUTABLE", sample_size=0, reason=reason)
-        return JointBacktestResult(status="NOT_COMPUTABLE", market_class=market_class, modeled_method=modeled_method, as_of=cutoff, minimum_sample=minimum_sample, independent_brier=empty, modeled_brier=empty.model_copy(update={"name": "modeled_brier"}), independent_log_loss=empty.model_copy(update={"name": "independent_log_loss"}), modeled_log_loss=empty.model_copy(update={"name": "modeled_log_loss"}), reasons=(reason,))
+        return JointBacktestResult(status="NOT_COMPUTABLE", market_class=market_class, modeled_method=modeled_method, model_id=model_id, as_of=cutoff, minimum_sample=minimum_sample, independent_brier=empty, modeled_brier=empty.model_copy(update={"name": "modeled_brier"}), independent_log_loss=empty.model_copy(update={"name": "independent_log_loss"}), modeled_log_loss=empty.model_copy(update={"name": "modeled_log_loss"}), reasons=(reason,))
     if len(scoped) < minimum_sample:
         reason = "minimum settled joint sample not met"
         def unavailable(name: str) -> JointBacktestMetric:
             return JointBacktestMetric(name=name, status="NOT_COMPUTABLE", sample_size=len(scoped), reason=reason)
-        return JointBacktestResult(status="NOT_COMPUTABLE", market_class=market_class, modeled_method=modeled_method, as_of=cutoff, minimum_sample=minimum_sample, leg_count=len(scoped[0].leg_marginals) if scoped else None, independent_brier=unavailable("independent_brier"), modeled_brier=unavailable("modeled_brier"), independent_log_loss=unavailable("independent_log_loss"), modeled_log_loss=unavailable("modeled_log_loss"), evidence_row_ids=tuple(row.row_id for row in scoped), reasons=(reason,))
+        return JointBacktestResult(status="NOT_COMPUTABLE", market_class=market_class, modeled_method=modeled_method, model_id=model_id, as_of=cutoff, minimum_sample=minimum_sample, leg_count=len(scoped[0].leg_marginals) if scoped else None, independent_brier=unavailable("independent_brier"), modeled_brier=unavailable("modeled_brier"), independent_log_loss=unavailable("independent_log_loss"), modeled_log_loss=unavailable("modeled_log_loss"), evidence_row_ids=tuple(row.row_id for row in scoped), reasons=(reason,))
     independent = [_loss(row.independent_probability, row.outcome) for row in scoped]
     modeled = [_loss(row.modeled_joint_probability, row.outcome) for row in scoped]
     def metric(name: str, values: list[float]) -> JointBacktestMetric:
@@ -138,7 +146,7 @@ def backtest_joint_probabilities(
     modeled_log = sum(value[1] for value in modeled) / len(modeled)
     improvement = independent_log - modeled_log
     return JointBacktestResult(
-        status="COMPUTED", market_class=market_class, modeled_method=modeled_method, as_of=cutoff,
+        status="COMPUTED", market_class=market_class, modeled_method=modeled_method, model_id=model_id, as_of=cutoff,
         minimum_sample=minimum_sample, leg_count=len(scoped[0].leg_marginals),
         independent_brier=metric("independent_brier", [value[0] for value in independent]),
         modeled_brier=metric("modeled_brier", [value[0] for value in modeled]),

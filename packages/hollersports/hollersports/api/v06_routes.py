@@ -144,6 +144,7 @@ class JointBacktestRequest(BaseModel):
     rows: list[JointBacktestRow]
     market_class: str = Field(min_length=1)
     modeled_method: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
     as_of: datetime
     minimum_sample: int = Field(default=20, ge=1)
 
@@ -449,6 +450,7 @@ def backtest_joint(body: JointBacktestRequest) -> dict[str, Any]:
         body.rows,
         market_class=body.market_class,
         modeled_method=body.modeled_method,
+        model_id=body.model_id,
         as_of=body.as_of,
         minimum_sample=body.minimum_sample,
     ).model_dump(mode="json")

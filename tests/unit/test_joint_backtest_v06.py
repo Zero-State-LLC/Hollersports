@@ -10,7 +10,9 @@ def row(row_id, outcome, *, available_at="2026-01-02T00:00:00Z", method="EMPIRIC
         row_id=row_id, event_id=f"event-{row_id}", market_class="NBA/SAME_GAME_PARLAY",
         leg_marginals=(0.5, 0.5), independent_probability=0.25,
         modeled_joint_probability=0.4, modeled_method=method, outcome=outcome,
+        model_id="joint-model-v1", prediction_evidence_at="2026-01-01T19:59:00Z",
         predicted_at="2026-01-01T20:00:00Z", available_at=available_at,
+        prediction_source="model-registry", prediction_source_hash=f"model-hash-{row_id}",
         source="settlement", source_hash=f"hash-{row_id}",
     )
 
@@ -18,6 +20,7 @@ def row(row_id, outcome, *, available_at="2026-01-02T00:00:00Z", method="EMPIRIC
 def backtest(rows, minimum_sample=5):
     return backtest_joint_probabilities(
         rows, market_class="NBA/SAME_GAME_PARLAY", modeled_method="EMPIRICAL_CONDITIONAL",
+        model_id="joint-model-v1",
         as_of=datetime(2026, 1, 2, 1, tzinfo=timezone.utc), minimum_sample=minimum_sample,
     )
 
@@ -63,13 +66,24 @@ def test_joint_backtest_row_enforces_probability_invariants():
         JointBacktestRow(
             row_id="bad", event_id="event", market_class="NBA/SGP", leg_marginals=(0.5, 0.5),
             independent_probability=0.3, modeled_joint_probability=0.4, modeled_method="MODEL", outcome=1,
+            model_id="model", prediction_evidence_at="2026-01-01T19:59:00Z",
             predicted_at="2026-01-01T20:00:00Z", available_at="2026-01-02T00:00:00Z",
+            prediction_source="model-registry", prediction_source_hash="model-hash",
             source="settlement", source_hash="hash",
         )
     with pytest.raises(ValueError, match="cannot exceed a marginal"):
         JointBacktestRow(
             row_id="bad-2", event_id="event", market_class="NBA/SGP", leg_marginals=(0.5, 0.5),
             independent_probability=0.25, modeled_joint_probability=0.6, modeled_method="MODEL", outcome=1,
+            model_id="model", prediction_evidence_at="2026-01-01T19:59:00Z",
             predicted_at="2026-01-01T20:00:00Z", available_at="2026-01-02T00:00:00Z",
+            prediction_source="model-registry", prediction_source_hash="model-hash",
             source="settlement", source_hash="hash",
         )
+
+
+def test_joint_backtest_rejects_post_prediction_model_evidence():
+    with pytest.raises(ValueError, match="cannot postdate prediction"):
+        JointBacktestRow.model_validate(row("late-model", 1).model_dump() | {
+            "prediction_evidence_at": "2026-01-01T20:01:00Z",
+        })
