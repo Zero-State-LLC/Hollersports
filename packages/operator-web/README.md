@@ -33,6 +33,14 @@ npm run build
 npm start
 ```
 
+The same-origin `/v1/*` proxy defaults to `http://127.0.0.1:8000`. Override it
+for isolated environments or deployments:
+
+```bash
+HOLLER_API_ORIGIN=http://127.0.0.1:8001 npm run build
+HOLLER_API_ORIGIN=http://127.0.0.1:8001 npm start
+```
+
 ## Routes
 
 | Route | Role |
