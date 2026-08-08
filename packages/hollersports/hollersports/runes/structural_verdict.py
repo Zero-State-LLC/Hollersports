@@ -68,6 +68,8 @@ def structural_verdict(
     dependency_confidence: float | None = None,
     joint_probability: float | None = None,
     book_joint_probability: float | None = None,
+    context_reference: str | None = None,
+    context_confidence: float | None = None,
 ) -> dict[str, Any]:
     """Return a bounded verdict from separated evidence families.
 
@@ -79,6 +81,7 @@ def structural_verdict(
         "bookmaker": {"probability": book_probability, "joint_probability": book_joint_probability},
         "market": {"consensus_probability": consensus_probability, "entropy": market_entropy},
         "player": {"reality_probability": reality_probability},
+        "context": {"reference": context_reference, "confidence": context_confidence},
         "dependency": {"required": dependency_required, "confidence": dependency_confidence, "joint_probability": joint_probability},
         "data_quality": data_quality,
     }

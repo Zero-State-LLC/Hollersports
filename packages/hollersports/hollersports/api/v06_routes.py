@@ -57,6 +57,14 @@ from hollersports.props import (
     reconstruct_survival,
 )
 from hollersports.runes.structural_verdict import StructuralThresholds, structural_verdict
+from hollersports.synthesis import (
+    ReleaseGateEvidence,
+    ReleaseGateThresholds,
+    StructuralEvidenceObservation,
+    SynthesisStorageError,
+    SynthesisStore,
+    evaluate_release_readiness,
+)
 
 router = APIRouter(prefix="/v1")
 
@@ -85,6 +93,10 @@ def _context_store(request: Request) -> ContextStore:
 
 def _dependency_store(request: Request) -> DependencyStore:
     return DependencyStore(request.app.state.data_root)
+
+
+def _synthesis_store(request: Request) -> SynthesisStore:
+    return SynthesisStore(request.app.state.data_root)
 
 
 class SingleAnalysisRequest(BaseModel):
@@ -128,6 +140,8 @@ class StructuralAnalysisRequest(BaseModel):
     dependency_confidence: float | None = None
     joint_probability: float | None = None
     book_joint_probability: float | None = None
+    context_reference: str | None = None
+    context_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class PropObservationRequest(BaseModel):
@@ -151,6 +165,17 @@ class DependencyObservationRequest(BaseModel):
     observation: DependencyObservation
     analysis_id: str = Field(min_length=1)
     analyzed_at: datetime
+
+
+class StructuralPersistenceRequest(BaseModel):
+    observation: StructuralEvidenceObservation
+    analysis_id: str = Field(min_length=1)
+    analyzed_at: datetime
+
+
+class ReleaseReadinessRequest(BaseModel):
+    evidence: ReleaseGateEvidence
+    thresholds: ReleaseGateThresholds
 
 
 @router.post("/markets/snapshots")
@@ -475,6 +500,53 @@ def analyze_recovery(body: RecoveryAnalysisRequest) -> dict[str, Any]:
 @router.post("/structural-verdict")
 def analyze_structure(body: StructuralAnalysisRequest) -> dict[str, Any]:
     return structural_verdict(**body.model_dump())
+
+
+@router.post("/structural/observations")
+def record_structural_analysis(body: StructuralPersistenceRequest, request: Request) -> dict[str, Any]:
+    store = _synthesis_store(request)
+    try:
+        analysis = store.derive(body.observation, body.analysis_id, body.analyzed_at)
+        observation_fingerprint, analysis_fingerprint = store.append_bundle(body.observation, analysis)
+    except (SynthesisStorageError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(
+        schema_version="StructuralPersistenceReceipt.v1", status=analysis.verdict_packet["status"],
+        observation_fingerprint=observation_fingerprint, analysis_fingerprint=analysis_fingerprint,
+        analysis_id=analysis.analysis_id,
+    )
+
+
+@router.get("/structural/{subject_id}")
+def get_structural_analysis(subject_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
+    found = _synthesis_store(request).latest_at_or_before(subject_id, at_or_before or datetime.now(timezone.utc))
+    if found is None:
+        return _envelope(schema_version="StructuralReplayPacket.v1", status="NOT_COMPUTABLE", reason="no structural evidence at or before cutoff")
+    observation, analysis = found
+    return _envelope(
+        schema_version="StructuralReplayPacket.v1",
+        status=analysis.verdict_packet["status"] if analysis is not None else "NOT_COMPUTABLE",
+        evidence_references=observation.evidence_references,
+        observation=observation.model_dump(mode="json"),
+        analysis=analysis.model_dump(mode="json") if analysis is not None else None,
+        reason=None if analysis is not None else "no structural derivation at or before cutoff",
+    )
+
+
+@router.post("/release-readiness")
+def release_readiness(body: ReleaseReadinessRequest) -> dict[str, Any]:
+    return evaluate_release_readiness(body.evidence, body.thresholds).model_dump(mode="json")
+
+
+@router.get("/health/structural")
+def structural_health(request: Request) -> dict[str, Any]:
+    store = _synthesis_store(request)
+    try:
+        issues = store.integrity_issues()
+        observations, analyses = store.observations(), store.analyses()
+    except (ValueError, OSError) as exc:
+        return _envelope(schema_version="StructuralHealthPacket.v1", status="NOT_COMPUTABLE", integrity_issues=[str(exc)])
+    return _envelope(schema_version="StructuralHealthPacket.v1", status="PASS" if not issues else "NOT_COMPUTABLE", observation_count=len(observations), analysis_count=len(analyses), integrity_issues=issues)
 
 
 @router.get("/health/bookmaker")

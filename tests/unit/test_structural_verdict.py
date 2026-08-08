@@ -68,6 +68,7 @@ def test_structural_verdict_separates_evidence_families():
         "bookmaker",
         "market",
         "player",
+        "context",
         "dependency",
         "data_quality",
     }

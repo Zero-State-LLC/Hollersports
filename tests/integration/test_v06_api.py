@@ -252,3 +252,39 @@ def test_v06_dependency_persistence_replay_and_health(tmp_path):
         health = client.get("/v1/health/dependency").json()
         assert health["status"] == "PASS"
         assert health["integrity_issues"] == []
+
+
+def test_v06_structural_persistence_and_release_readiness(tmp_path):
+    thresholds = {
+        "minimum_data_quality": 0.7, "maximum_market_entropy": 0.4,
+        "minimum_dependency_confidence": 0.6, "edge_probability_points": 0.03,
+        "conflict_probability_points": 0.08, "fair_pricing_tolerance": 0.015,
+    }
+    observation = {
+        "observation_id": "struct-1", "subject_id": "market-1", "subject_type": "SINGLE",
+        "observed_at": "2026-01-01T10:00:00Z", "recorded_at": "2026-01-01T10:01:00Z",
+        "source": "fixture", "source_hash": "struct-source", "threshold_source_id": "cal-1",
+        "threshold_source_hash": "cal-hash", "book_probability": 0.59,
+        "consensus_probability": 0.52, "reality_probability": 0.51,
+        "data_quality": 0.9, "market_entropy": 0.1, "thresholds": thresholds,
+        "evidence_references": {"bookmaker": "book-1", "market": "market-1", "context": "context-1", "player": "player-1"},
+    }
+    gate_thresholds = {
+        "minimum_backtest_sample": 20, "minimum_qualified_fingerprints": 2,
+        "maximum_prop_monotonic_violation_rate": 0.0, "maximum_prop_calibration_error": 0.05,
+        "minimum_verdict_discrimination": 0.1, "minimum_pass_retained_sample": 10,
+    }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        stored = client.post("/v1/structural/observations", json={"observation": observation, "analysis_id": "analysis-1", "analyzed_at": "2026-01-01T10:02:00Z"})
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["status"] == "RETAIL_PRICED"
+        replay = client.get("/v1/structural/market-1", params={"at_or_before": "2026-01-01T10:02:00Z"}).json()
+        assert replay["analysis"]["verdict_packet"]["verdict"] == "RETAIL_PRICED"
+        assert set(replay["evidence_references"]) == {"bookmaker", "market", "context", "player"}
+
+        readiness = client.post("/v1/release-readiness", json={"evidence": {}, "thresholds": gate_thresholds})
+        assert readiness.status_code == 200
+        assert readiness.json()["status"] == "NOT_READY"
+        assert all(gate["status"] == "NOT_COMPUTABLE" for gate in readiness.json()["gates"])
+        health = client.get("/v1/health/structural").json()
+        assert health["status"] == "PASS"
