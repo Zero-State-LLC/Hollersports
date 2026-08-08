@@ -10,6 +10,7 @@ QUOTE = {
     "market_type": "MONEYLINE",
     "fetched_at": "2026-01-01T10:00:00Z",
     "source": "fixture",
+    "source_hash": "fixture-sha256",
     "outcomes": [
         {"selection": "HOME", "american_odds": -110},
         {"selection": "AWAY", "american_odds": -110},
@@ -29,11 +30,17 @@ def test_v06_market_memory_and_temporal_api(tmp_path):
         recorded = client.post("/v1/markets/snapshots", json=body)
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["capital_authority"] is False
+        duplicate = client.post("/v1/markets/snapshots", json=body)
+        assert duplicate.status_code == 409
         timeline = client.get("/v1/markets/market-1/timeline")
         assert timeline.status_code == 200
         assert [row["snapshot_id"] for row in timeline.json()["observations"]] == ["snap-1"]
         books = client.get("/v1/books").json()
         assert books["books"] == ["book-a"]
+        invalid_time = client.get(
+            "/v1/markets/market-1/timeline", params={"at_or_before": "not-a-time"}
+        )
+        assert invalid_time.status_code == 422
 
 
 def test_v06_single_reconstructs_fair_probability(tmp_path):

@@ -15,6 +15,7 @@ def _quote(book="book-a", market_id="m1"):
         market_type="MONEYLINE",
         fetched_at="2026-01-01T10:00:00Z",
         source="fixture",
+        source_hash="fixture-sha256",
         outcomes=(
             OutcomePrice(selection="HOME", american_odds=-110),
             OutcomePrice(selection="AWAY", american_odds=-110),
@@ -66,3 +67,37 @@ def test_snapshot_rejects_execution_authority():
         pass
     else:
         raise AssertionError("market snapshot accepted execution authority")
+
+
+def test_market_memory_rejects_duplicate_snapshot_identity(tmp_path):
+    store = MarketSnapshotStore(tmp_path)
+    snapshot = MarketSnapshotV2(
+        snapshot_id="snap-1",
+        captured_at="2026-01-01T10:00:00Z",
+        event_id="event-1",
+        market_type="MONEYLINE",
+        quotes=(_quote(),),
+    )
+    store.append(snapshot)
+    try:
+        store.append(snapshot)
+    except ValueError as exc:
+        assert "already exists" in str(exc)
+    else:
+        raise AssertionError("duplicate immutable snapshot identity was accepted")
+
+
+def test_temporal_fields_require_timezone_and_observation_order():
+    try:
+        _quote().model_copy(update={"fetched_at": "not-validated"})
+        MarketSnapshotV2(
+            snapshot_id="snap-1",
+            captured_at="2026-01-01T09:00:00Z",
+            event_id="event-1",
+            market_type="MONEYLINE",
+            quotes=(_quote(),),
+        )
+    except ValueError as exc:
+        assert "later than" in str(exc)
+    else:
+        raise AssertionError("future quote leaked into an earlier snapshot")

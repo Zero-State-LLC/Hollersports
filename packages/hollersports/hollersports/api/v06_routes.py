@@ -6,9 +6,10 @@ advisory-only and incapable of authorizing capital or execution.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from hollersports.bookmaker import BookmakerQuote, MarketSnapshotStore, MarketSnapshotV2
@@ -74,7 +75,10 @@ class StructuralAnalysisRequest(BaseModel):
 @router.post("/markets/snapshots")
 def record_market_snapshot(body: MarketSnapshotV2, request: Request) -> dict[str, Any]:
     """Append one immutable observation. Existing observations are never updated."""
-    return _snapshot_store(request).append(body)
+    try:
+        return _snapshot_store(request).append(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/books")
@@ -102,7 +106,7 @@ def get_book_fingerprint(book_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/markets/{market_id}/timeline")
-def market_timeline(market_id: str, request: Request, at_or_before: str | None = None) -> dict[str, Any]:
+def market_timeline(market_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
     snapshots = [
         item for item in _snapshot_store(request).query(end_at=at_or_before)
         if any(quote.market_id == market_id for quote in item.quotes)
@@ -117,7 +121,7 @@ def market_timeline(market_id: str, request: Request, at_or_before: str | None =
 
 
 @router.get("/markets/{market_id}/book-analysis")
-def market_book_analysis(market_id: str, request: Request, at_or_before: str | None = None) -> dict[str, Any]:
+def market_book_analysis(market_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
     snapshots = [
         item for item in _snapshot_store(request).query(end_at=at_or_before)
         if any(quote.market_id == market_id for quote in item.quotes)

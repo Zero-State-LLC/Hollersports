@@ -7,9 +7,15 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-def utc_now_iso() -> str:
-    """Return a UTC timestamp for locally captured records."""
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+def utc_now() -> datetime:
+    """Return an aware UTC timestamp for locally captured records."""
+    return datetime.now(timezone.utc)
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("timestamp must include a timezone")
+    return value
 
 class GovernanceFields(BaseModel):
     """Governance envelope enforcing SHADOW_ONLY, ADVISORY_ONLY, and no authority."""
@@ -50,19 +56,36 @@ class BookmakerQuote(GovernanceFields):
     market_type: str = Field(min_length=1)
     outcomes: tuple[OutcomePrice, ...] = Field(min_length=1)
     market_id: str | None = None
-    event_start_time: str | None = None
-    fetched_at: str = Field(default_factory=utc_now_iso)
-    source: str | None = None
+    event_start_time: datetime | None = None
+    fetched_at: datetime = Field(default_factory=utc_now)
+    source: str = Field(min_length=1)
+    source_hash: str = Field(min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("event_start_time", "fetched_at")
+    @classmethod
+    def _aware_timestamps(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _aware(value)
 
 class MarketSnapshotV2(GovernanceFields):
     """Immutable append-only market_snapshot.v2 record."""
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal["market_snapshot.v2"] = "market_snapshot.v2"
     snapshot_id: str = Field(min_length=1)
-    captured_at: str = Field(default_factory=utc_now_iso)
+    captured_at: datetime = Field(default_factory=utc_now)
     event_id: str = Field(min_length=1)
     market_type: str = Field(min_length=1)
     quotes: tuple[BookmakerQuote, ...] = Field(min_length=1)
     fingerprint: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("captured_at")
+    @classmethod
+    def _aware_captured_at(cls, value: datetime) -> datetime:
+        return _aware(value)
+
+    @model_validator(mode="after")
+    def _observation_precedes_capture(self) -> "MarketSnapshotV2":
+        if any(quote.fetched_at > self.captured_at for quote in self.quotes):
+            raise ValueError("quote fetched_at cannot be later than snapshot captured_at")
+        return self
