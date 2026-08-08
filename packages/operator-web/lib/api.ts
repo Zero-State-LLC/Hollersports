@@ -5,6 +5,8 @@
 
 export type Json = Record<string, unknown>;
 
+const PUBLIC_API_ORIGIN = (process.env.NEXT_PUBLIC_HOLLER_API_ORIGIN ?? "").replace(/\/$/, "");
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -31,7 +33,8 @@ async function request<T = Json>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(path, {
+  const target = PUBLIC_API_ORIGIN && path.startsWith("/") ? `${PUBLIC_API_ORIGIN}${path}` : path;
+  const res = await fetch(target, {
     ...init,
     headers: {
       Accept: "application/json",

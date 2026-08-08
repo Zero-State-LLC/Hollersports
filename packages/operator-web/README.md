@@ -41,6 +41,24 @@ HOLLER_API_ORIGIN=http://127.0.0.1:8001 npm run build
 HOLLER_API_ORIGIN=http://127.0.0.1:8001 npm start
 ```
 
+## GitHub Pages
+
+`.github/workflows/pages.yml` exports and deploys this package at the repository
+subpath. Until a public API exists, evidence panels intentionally fail closed to
+`API OFFLINE` / `NOT_COMPUTABLE`.
+
+When an HTTPS API is available, create the repository Actions variable
+`HOLLER_API_ORIGIN` with its origin, for example `https://api.example.com`. The
+Pages build exposes that value as `NEXT_PUBLIC_HOLLER_API_ORIGIN`; the API must
+allow the GitHub Pages origin through CORS. Do not place API keys in this variable
+or in browser code.
+
+For a local Pages-equivalent export:
+
+```bash
+GITHUB_PAGES=true GITHUB_REPOSITORY=owner/Hollersports npm run build
+```
+
 ## Routes
 
 | Route | Role |
