@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hollersports.bookmaker import BacktestRow, BookmakerQuote, DevigCalibrationRow, FingerprintStore, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market, compare_devig_methods
+from hollersports.bookmaker import BacktestRow, BookmakerQuote, DevigCalibrationPromotionStore, DevigCalibrationResult, DevigCalibrationRow, FingerprintStore, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market, compare_devig_methods
 from hollersports.bookmaker.backtest import compute_backtest_metrics
 from hollersports.bookmaker.consensus import consensus_summary, weighted_consensus
 from hollersports.bookmaker.devig import devig
@@ -60,6 +60,9 @@ from hollersports.props import (
     compute_tail_tax,
     reconstruct_survival,
 )
+from hollersports.dependency.backtest import JointBacktestResult
+from hollersports.ml.promotion_registry import ModelFamily, PromotionRecord, ShadowPromotionRegistry
+from hollersports.props.backtest import PropSurfaceBacktestResult
 from hollersports.runes.structural_verdict import StructuralThresholds, structural_verdict
 from hollersports.synthesis import (
     ReleaseGateEvidence,
@@ -67,6 +70,7 @@ from hollersports.synthesis import (
     StructuralEvidenceObservation,
     SynthesisStorageError,
     SynthesisStore,
+    assemble_release_gate_evidence,
     evaluate_release_readiness,
 )
 
@@ -101,6 +105,14 @@ def _dependency_store(request: Request) -> DependencyStore:
 
 def _synthesis_store(request: Request) -> SynthesisStore:
     return SynthesisStore(request.app.state.data_root)
+
+
+def _devig_promotion_store(request: Request) -> DevigCalibrationPromotionStore:
+    return DevigCalibrationPromotionStore(request.app.state.data_root)
+
+
+def _model_promotion_registry(request: Request) -> ShadowPromotionRegistry:
+    return ShadowPromotionRegistry(request.app.state.data_root / "ml" / "promotions.jsonl")
 
 
 class SingleAnalysisRequest(BaseModel):
@@ -225,6 +237,38 @@ class StructuralPersistenceRequest(BaseModel):
 class ReleaseReadinessRequest(BaseModel):
     evidence: ReleaseGateEvidence
     thresholds: ReleaseGateThresholds
+
+
+class DevigCalibrationPromotionRequest(BaseModel):
+    promotion_id: str = Field(min_length=1)
+    result: DevigCalibrationResult
+    promoted_at: datetime
+
+
+class ModelPromotionRequest(BaseModel):
+    record_id: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    model_family: ModelFamily
+    sport: str = Field(min_length=1)
+    market_class: str = Field(min_length=1)
+    market_subclass: str | None = None
+    trained_at: datetime
+    evaluated_at: datetime
+    promoted_at: datetime
+    artifact_hash: str = Field(min_length=64, max_length=64)
+    evidence_hash: str = Field(min_length=64, max_length=64)
+    sample_size: int = Field(ge=1)
+    sample_minimum: int = Field(ge=1)
+    metrics: dict[str, float] = Field(min_length=1)
+    notes: str | None = None
+
+
+class AssembledReleaseReadinessRequest(BaseModel):
+    base: ReleaseGateEvidence
+    thresholds: ReleaseGateThresholds
+    devig: DevigCalibrationResult | None = None
+    props: PropSurfaceBacktestResult | None = None
+    joint: JointBacktestResult | None = None
 
 
 @router.post("/markets/snapshots")
@@ -706,6 +750,91 @@ def get_structural_analysis(subject_id: str, request: Request, at_or_before: dat
 @router.post("/release-readiness")
 def release_readiness(body: ReleaseReadinessRequest) -> dict[str, Any]:
     return evaluate_release_readiness(body.evidence, body.thresholds).model_dump(mode="json")
+
+
+@router.post("/release-readiness/assembled")
+def assembled_release_readiness(body: AssembledReleaseReadinessRequest) -> dict[str, Any]:
+    assembly = assemble_release_gate_evidence(body.base, devig=body.devig, props=body.props, joint=body.joint)
+    readiness = evaluate_release_readiness(assembly.evidence, body.thresholds)
+    return _envelope(
+        schema_version="V06AssembledReleaseReadiness.v1",
+        status=readiness.status,
+        evidence=assembly.evidence.model_dump(mode="json"),
+        packet_fingerprints=assembly.packet_fingerprints,
+        gates=[gate.model_dump(mode="json") for gate in readiness.gates],
+    )
+
+
+@router.post("/calibration/devig/promote")
+def promote_devig_calibration(body: DevigCalibrationPromotionRequest, request: Request) -> dict[str, Any]:
+    try:
+        record = _devig_promotion_store(request).append(
+            promotion_id=body.promotion_id,
+            result=body.result,
+            promoted_at=body.promoted_at,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return record.model_dump(mode="json")
+
+
+@router.get("/calibration/devig")
+def get_devig_calibrations(
+    request: Request,
+    bookmaker: str | None = None,
+    sport: str | None = None,
+    market_class: str | None = None,
+    odds_bucket: str | None = None,
+    at_or_before: datetime | None = None,
+) -> dict[str, Any]:
+    rows = _devig_promotion_store(request).query(
+        bookmaker=bookmaker, sport=sport, market_class=market_class,
+        odds_bucket=odds_bucket, at_or_before=at_or_before,
+    )
+    return _envelope(schema_version="DevigCalibrationPromotionList.v1", status="COMPUTED", records=[row.model_dump(mode="json") for row in rows])
+
+
+@router.post("/models/promote")
+def promote_shadow_model(body: ModelPromotionRequest, request: Request) -> dict[str, Any]:
+    try:
+        record = PromotionRecord(**body.model_dump())
+        _model_promotion_registry(request).append(record)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _envelope(schema_version="ShadowModelPromotionReceipt.v1", status="COMPUTED", record=record.payload())
+
+
+@router.get("/models")
+def get_shadow_models(
+    request: Request,
+    sport: str | None = None,
+    model_family: ModelFamily | None = None,
+    market_class: str | None = None,
+    market_subclass: str | None = None,
+    at_or_before: datetime | None = None,
+) -> dict[str, Any]:
+    rows = _model_promotion_registry(request).query(
+        sport=sport, model_family=model_family, market_class=market_class,
+        market_subclass=market_subclass, promoted_to=at_or_before,
+    )
+    return _envelope(schema_version="ShadowModelPromotionList.v1", status="COMPUTED", records=[row.payload() for row in rows])
+
+
+@router.get("/health/promotions")
+def promotion_health(request: Request) -> dict[str, Any]:
+    devig_issues = _devig_promotion_store(request).integrity_issues()
+    model_health = _model_promotion_registry(request).health()
+    issues = [*devig_issues, *model_health.errors]
+    return _envelope(
+        schema_version="PromotionRegistryHealth.v1",
+        status="PASS" if not issues else "NOT_COMPUTABLE",
+        devig_promotion_count=len(_devig_promotion_store(request).records()),
+        model_promotion_count=model_health.checked_records,
+        model_registry_hash_chain=True,
+        devig_packet_fingerprints=True,
+        external_signed_manifest=False,
+        integrity_issues=issues,
+    )
 
 
 @router.get("/health/structural")
