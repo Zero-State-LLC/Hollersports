@@ -14,10 +14,23 @@ from hollersports.ml.features import (
     american_to_implied,
     build_feature_rows,
 )
+from hollersports.ml.promotion_registry import (
+    ModelFamily,
+    PromotionRecord,
+    RegistryHealth,
+    RegistryHealthStatus,
+    ShadowPromotionRegistry,
+    stable_hash,
+)
 from hollersports.ml.train import predict_proba, train_baseline
 
 __all__ = [
     "FEATURE_NAMES",
+    "ModelFamily",
+    "PromotionRecord",
+    "RegistryHealth",
+    "RegistryHealthStatus",
+    "ShadowPromotionRegistry",
     "american_to_decimal",
     "american_to_implied",
     "apply_ensemble_to_markets",
@@ -27,5 +40,6 @@ __all__ = [
     "compute_ev",
     "predict_calibrated",
     "predict_proba",
+    "stable_hash",
     "train_baseline",
 ]
