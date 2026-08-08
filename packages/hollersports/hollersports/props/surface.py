@@ -31,6 +31,9 @@ class BoundedMomentEstimate(BaseModel):
 
     status: ComputationStatus
     mean: float | None = None
+    variance: float | None = None
+    skew: float | None = None
+    quantile_count: int = 0
     lower_bound: float | None = None
     upper_bound: float | None = None
     diagnostic: Diagnostic | None = None
@@ -98,8 +101,19 @@ def _moments(points: tuple[SurvivalPoint, ...], quantiles: dict[str, QuantileEst
         )
     lower = points[0].threshold
     upper = points[-1].threshold
-    mean = sum(q.threshold for q in computable) / len(computable)
-    return BoundedMomentEstimate(status=ComputationStatus.COMPUTABLE, mean=min(upper, max(lower, mean)), lower_bound=lower, upper_bound=upper)
+    values = [q.threshold for q in computable]
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
+    skew = 0.0 if variance <= 1e-15 else sum(((value - mean) / variance**0.5) ** 3 for value in values) / len(values)
+    return BoundedMomentEstimate(
+        status=ComputationStatus.COMPUTABLE,
+        mean=min(upper, max(lower, mean)),
+        variance=variance,
+        skew=skew,
+        quantile_count=len(values),
+        lower_bound=lower,
+        upper_bound=upper,
+    )
 
 
 def reconstruct_survival(ladder: PropLadder) -> SurvivalSurface:

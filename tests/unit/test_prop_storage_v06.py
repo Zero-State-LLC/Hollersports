@@ -130,3 +130,23 @@ def test_surface_persistence_references_ladder_fingerprint_and_never_derives_fro
 def test_observed_at_must_be_timezone_aware():
     with pytest.raises(ValueError, match="timezone-aware"):
         _ladder_observation("obs-naive", datetime(2026, 8, 8, 10, 0))
+
+
+def test_surface_identity_and_temporal_derivation_are_enforced(tmp_path):
+    store = PropPersistenceStore(tmp_path)
+    observation = _ladder_observation("obs-1", datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc))
+    store.append_ladder_observation(observation)
+    surface = DerivedPropSurfaceObservation(
+        surface_id="surface-1", observation_id="obs-1", ladder_fingerprint=observation.fingerprint,
+        market_id="wrong-market", book_id=observation.book_id, event_id=observation.event_id,
+        player_id=observation.player_id, player_name=observation.player_name, stat_type=observation.stat_type,
+        observed_at=observation.observed_at, derived_at=datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc),
+        surface=reconstruct_survival(observation.ladder),
+    )
+    with pytest.raises(PropStorageError, match="market_id"):
+        store.append_surface_observation(surface)
+
+    valid = surface.model_copy(update={"surface_id": "surface-2", "market_id": observation.market_id})
+    store.append_surface_observation(valid)
+    assert store.latest_surface_at_or_before("obs-1", datetime(2026, 8, 8, 10, 4, tzinfo=timezone.utc)) is None
+    assert store.latest_surface_at_or_before("obs-1", datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc)) == valid

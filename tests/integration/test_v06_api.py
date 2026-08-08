@@ -107,6 +107,31 @@ def test_v06_prop_surface_repairs_inversion(tmp_path):
         assert body["surface"]["weak_fit"] is True
 
 
+def test_v06_prop_observation_persistence_and_temporal_replay(tmp_path):
+    observation = {
+        "observation_id": "prop-obs-1", "market_id": "prop-market-1", "book_id": "book-a",
+        "event_id": "event-1", "player_id": "player-1", "stat_type": "points",
+        "observed_at": "2026-01-01T10:00:00Z", "source": "fixture", "source_hash": "prop-source-hash",
+        "ladder": {"event_id": "event-1", "market": "PLAYER_POINTS", "player": "player-1", "thresholds": [
+            {"threshold": 20, "fair_probability": 0.60, "source": "fixture"},
+            {"threshold": 25, "fair_probability": 0.45, "source": "fixture"},
+            {"threshold": 30, "fair_probability": 0.30, "source": "fixture"},
+        ]},
+    }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        recorded = client.post("/v1/props/observations", json={"observation": observation, "surface_id": "surface-1", "derived_at": "2026-01-01T10:01:00Z"})
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["capital_authority"] is False
+        assert client.post("/v1/props/observations", json={"observation": observation, "surface_id": "surface-2", "derived_at": "2026-01-01T10:02:00Z"}).status_code == 409
+
+        before_derivation = client.get("/v1/props/prop-market-1", params={"at_or_before": "2026-01-01T10:00:30Z"}).json()
+        assert before_derivation["status"] == "NOT_COMPUTABLE"
+        assert before_derivation["ladder"]["source_hash"] == "prop-source-hash"
+        replay = client.get("/v1/props/prop-market-1", params={"at_or_before": "2026-01-01T10:01:00Z"}).json()
+        assert replay["status"] == "COMPUTED"
+        assert replay["surface"]["ladder_fingerprint"] == replay["ladder_fingerprint"]
+
+
 def test_v06_fingerprint_and_backtest_require_evidence(tmp_path):
     with TestClient(create_app(data_root=tmp_path)) as client:
         fingerprint = client.post(

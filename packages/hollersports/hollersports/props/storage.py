@@ -78,6 +78,10 @@ class PropLadderObservation(BaseModel):
             raise ValueError("props persistence is SHADOW_ONLY")
         if self.capital_authority or self.execution_authority:
             raise ValueError("capital_authority and execution_authority must be false")
+        if self.event_id != self.ladder.event_id:
+            raise ValueError("event_id must match ladder.event_id")
+        if self.stat_type.casefold() not in self.ladder.market.casefold():
+            raise ValueError("stat_type must identify the ladder market")
         return self
 
     @property
@@ -162,6 +166,9 @@ class PropPersistenceStore:
             raise PropStorageError("surface ladder_fingerprint does not match stored ladder observation")
         if surface.observed_at != ladder.observed_at:
             raise PropStorageError("surface observed_at must match ladder observed_at to avoid future derivation")
+        for field in ("market_id", "book_id", "event_id", "player_id", "player_name", "stat_type"):
+            if getattr(surface, field) != getattr(ladder, field):
+                raise PropStorageError(f"surface {field} must match stored ladder observation")
         existing_ids = {item.surface_id for item in self.iter_surface_observations()}
         if surface.surface_id in existing_ids:
             raise DuplicateSurfaceError(f"duplicate surface_id: {surface.surface_id}")
@@ -179,6 +186,18 @@ class PropPersistenceStore:
             if observation.observation_id == observation_id:
                 return observation
         return None
+
+    def latest_surface_at_or_before(self, observation_id: str, as_of: datetime) -> DerivedPropSurfaceObservation | None:
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("as_of must be timezone-aware")
+        cutoff = as_of.astimezone(timezone.utc)
+        candidates = [
+            item for item in self.iter_surface_observations()
+            if item.observation_id == observation_id
+            and item.observed_at <= cutoff
+            and item.derived_at <= cutoff
+        ]
+        return max(candidates, key=lambda item: item.derived_at, default=None)
 
     def latest_ladder_at_or_before(
         self,

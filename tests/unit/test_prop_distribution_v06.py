@@ -41,6 +41,9 @@ def test_surface_adds_residuals_fit_error_quantiles_and_bounded_moments():
     assert surface.moments is not None
     assert surface.moments.status == ComputationStatus.COMPUTABLE
     assert 10.0 <= surface.moments.mean <= 50.0
+    assert surface.moments.variance == pytest.approx(200.0)
+    assert surface.moments.skew == pytest.approx(0.0)
+    assert surface.moments.quantile_count == 5
 
 
 def test_quantiles_and_moments_do_not_extrapolate_beyond_observed_range():

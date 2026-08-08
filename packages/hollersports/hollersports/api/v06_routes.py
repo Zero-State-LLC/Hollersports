@@ -6,7 +6,7 @@ advisory-only and incapable of authorizing capital or execution.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -26,7 +26,18 @@ from hollersports.dependency import (
     LegProbability,
     analyze_parlay,
 )
-from hollersports.props import PropLadder, compute_curvature, compute_tail_tax, reconstruct_survival
+from hollersports.props import (
+    DerivedPropSurfaceObservation,
+    DuplicateObservationError,
+    DuplicateSurfaceError,
+    PropLadder,
+    PropLadderObservation,
+    PropPersistenceStore,
+    PropStorageError,
+    compute_curvature,
+    compute_tail_tax,
+    reconstruct_survival,
+)
 from hollersports.runes.structural_verdict import StructuralThresholds, structural_verdict
 
 router = APIRouter(prefix="/v1")
@@ -44,6 +55,10 @@ def _envelope(**values: Any) -> dict[str, Any]:
 
 def _snapshot_store(request: Request) -> MarketSnapshotStore:
     return MarketSnapshotStore(request.app.state.data_root)
+
+
+def _prop_store(request: Request) -> PropPersistenceStore:
+    return PropPersistenceStore(request.app.state.data_root)
 
 
 class SingleAnalysisRequest(BaseModel):
@@ -87,6 +102,12 @@ class StructuralAnalysisRequest(BaseModel):
     dependency_confidence: float | None = None
     joint_probability: float | None = None
     book_joint_probability: float | None = None
+
+
+class PropObservationRequest(BaseModel):
+    observation: PropLadderObservation
+    surface_id: str = Field(min_length=1)
+    derived_at: datetime
 
 
 @router.post("/markets/snapshots")
@@ -251,11 +272,64 @@ def prop_surface(body: PropLadder) -> dict[str, Any]:
     )
 
 
+@router.post("/props/observations")
+def record_prop_observation(body: PropObservationRequest, request: Request) -> dict[str, Any]:
+    """Append an immutable ladder observation and its separately derived surface."""
+    store = _prop_store(request)
+    try:
+        if store.get_ladder_observation(body.observation.observation_id) is not None:
+            raise DuplicateObservationError(f"duplicate observation_id: {body.observation.observation_id}")
+        if any(item.surface_id == body.surface_id for item in store.iter_surface_observations()):
+            raise DuplicateSurfaceError(f"duplicate surface_id: {body.surface_id}")
+        ladder_fingerprint = body.observation.fingerprint
+        derived = DerivedPropSurfaceObservation(
+            surface_id=body.surface_id,
+            observation_id=body.observation.observation_id,
+            ladder_fingerprint=ladder_fingerprint,
+            market_id=body.observation.market_id,
+            book_id=body.observation.book_id,
+            event_id=body.observation.event_id,
+            player_id=body.observation.player_id,
+            player_name=body.observation.player_name,
+            stat_type=body.observation.stat_type,
+            observed_at=body.observation.observed_at,
+            derived_at=body.derived_at,
+            surface=reconstruct_survival(body.observation.ladder),
+        )
+        store.append_ladder_observation(body.observation)
+        surface_fingerprint = store.append_surface_observation(derived)
+    except (DuplicateObservationError, DuplicateSurfaceError, PropStorageError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope(
+        schema_version="PropPersistenceReceipt.v1",
+        status="COMPUTED",
+        observation_id=body.observation.observation_id,
+        surface_id=body.surface_id,
+        ladder_fingerprint=ladder_fingerprint,
+        surface_fingerprint=surface_fingerprint,
+    )
+
+
 @router.get("/props/{market_id}")
 @router.get("/props/{market_id}/surface")
 @router.get("/props/{market_id}/ladder")
-def get_prop_analysis(market_id: str) -> dict[str, Any]:
-    return _envelope(schema_version="prop_ladder.v1", status="NOT_COMPUTABLE", market_id=market_id, reason="no persisted prop ladder was supplied")
+def get_prop_analysis(market_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
+    store = _prop_store(request)
+    cutoff = at_or_before or datetime.now(timezone.utc)
+    candidates = [item for item in store.iter_ladder_observations() if item.market_id == market_id and item.observed_at <= cutoff]
+    if not candidates:
+        return _envelope(schema_version="prop_ladder.v1", status="NOT_COMPUTABLE", market_id=market_id, reason="no persisted prop ladder at or before cutoff")
+    ladder = max(candidates, key=lambda item: item.observed_at)
+    surface = store.latest_surface_at_or_before(ladder.observation_id, cutoff)
+    return _envelope(
+        schema_version="prop_analysis.v1",
+        status="COMPUTED" if surface is not None else "NOT_COMPUTABLE",
+        market_id=market_id,
+        ladder=ladder.model_dump(mode="json"),
+        ladder_fingerprint=ladder.fingerprint,
+        surface=surface.model_dump(mode="json") if surface is not None else None,
+        reason=None if surface is not None else "no derived surface available at or before cutoff",
+    )
 
 
 @router.post("/structural-verdict")
