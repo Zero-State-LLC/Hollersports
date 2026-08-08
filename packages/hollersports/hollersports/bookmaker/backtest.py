@@ -116,6 +116,8 @@ def log_loss(rows: Iterable[BacktestRow], *, min_samples: int = 1, eps: float = 
 
 def expected_calibration_error(rows: Iterable[BacktestRow], *, bins: int = 10, min_samples: int = 1) -> BacktestMetric:
     usable = [r for r in _rows(rows) if r.outcome is not None]
+    if bins <= 0:
+        return _not("ece", len(usable), "bins must be positive")
     if len(usable) < min_samples:
         return _not("ece", len(usable), "outcomes or minimum samples absent")
     total = 0.0

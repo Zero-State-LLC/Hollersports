@@ -144,3 +144,9 @@ def test_backtest_row_rejects_future_leakage_and_authority():
             prediction_at="2026-01-01T10:00:00Z",
             execution_authority=True,
         )
+
+
+def test_ece_rejects_non_positive_bins():
+    metric = expected_calibration_error([_row(1, 0.6, 1)], bins=0)
+    assert metric.status == "NOT_COMPUTABLE"
+    assert metric.reason == "bins must be positive"

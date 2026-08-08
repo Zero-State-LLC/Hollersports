@@ -63,6 +63,7 @@ def test_weighted_consensus_uses_supplied_factors_and_no_implicit_calibration():
     assert result.status == "COMPUTED"
     assert result.weights == {"sharp": 0.8, "slow": 0.2}
     assert 1.0 < result.effective_book_count < 2.0
+    assert result.weight_entropy > result.entropy >= 0.0
     assert abs(sum(result.probabilities.values()) - 1.0) < 1e-12
     sharp_provenance = next(item for item in result.source_provenance if item["bookmaker"] == "sharp")
     slow_provenance = next(item for item in result.source_provenance if item["bookmaker"] == "slow")
@@ -94,6 +95,7 @@ def test_bookmaker_fingerprint_minimum_sample_and_field_evidence():
     assert fp.hold == 0.04
     assert abs(fp.stale_rate - 0.25) < 1e-12
     assert fp.fields["bias"] == "COMPUTED"
+    assert fp.field_sample_sizes["brier"] == 20
     assert fp.source_provenance[0]["source_hash"] == "row-0"
 
     no_metrics = bookmaker_fingerprint(
@@ -110,3 +112,42 @@ def test_bookmaker_fingerprint_minimum_sample_and_field_evidence():
     )
     assert no_metrics.status == "NOT_COMPUTABLE"
     assert no_metrics.fields["brier"] == "NOT_COMPUTABLE"
+
+
+def test_consensus_rejects_incomparable_selection_sets():
+    one_sided = BookmakerQuote(
+        bookmaker="broken",
+        event_id="event-1",
+        market_id="m1",
+        market_type="MONEYLINE",
+        fetched_at="2026-01-01T10:00:00Z",
+        source="fixture",
+        source_hash="broken-hash",
+        outcomes=(OutcomePrice(selection="HOME", observed_probability=0.80),),
+    )
+    result = weighted_consensus((_quote("complete"), one_sided))
+    assert result.status == "NOT_COMPUTABLE"
+    assert result.bookmakers_observed == ["broken", "complete"]
+    assert result.effective_book_count is None
+
+
+def test_fingerprint_fields_each_require_the_minimum_sample():
+    rows = [
+        {
+            "bookmaker": "book-a",
+            "source": "fixture",
+            "source_hash": f"partial-{i}",
+            **({"probability": 0.6, "outcome": 1} if i == 0 else {}),
+        }
+        for i in range(20)
+    ]
+    result = bookmaker_fingerprint("book-a", rows, minimum_sample=20)
+    assert result.status == "NOT_COMPUTABLE"
+    assert result.fields["brier"] == "NOT_COMPUTABLE"
+    assert result.field_sample_sizes["brier"] == 1
+
+
+def test_fingerprint_rejects_invalid_calibration_bins():
+    result = bookmaker_fingerprint("book-a", [], minimum_sample=20, ece_bins=0)
+    assert result.status == "NOT_COMPUTABLE"
+    assert "must be positive" in result.reason

@@ -53,6 +53,14 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
     outcome/actual/won, raw_probability, overround/hold, bias, stale/stale_seconds,
     source, source_hash. Missing evidence yields NOT_COMPUTABLE fields.
     """
+    if minimum_sample <= 0 or ece_bins <= 0:
+        return BookmakerFingerprint(
+            status="NOT_COMPUTABLE",
+            bookmaker=bookmaker,
+            sample_size=0,
+            minimum_sample=max(0, minimum_sample),
+            reason="minimum_sample and ece_bins must be positive",
+        )
     scoped = [
         row
         for row in rows
@@ -105,8 +113,16 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
             stale_values.append(1.0 if stale > 0.0 else 0.0)
 
     fields: dict[str, str] = {}
+    field_sample_sizes = {
+        "brier": len(scored),
+        "log_loss": len(scored),
+        "ece": len(scored),
+        "hold": len(holds),
+        "bias": len(biases),
+        "stale_rate": len(stale_values),
+    }
     brier = log_loss = ece = None
-    if scored:
+    if len(scored) >= minimum_sample:
         brier = sum((p - y) ** 2 for p, y in scored) / len(scored)
         log_loss = -sum(y * math.log(max(min(p, 1 - 1e-15), 1e-15)) + (1 - y) * math.log(max(min(1 - p, 1 - 1e-15), 1e-15)) for p, y in scored) / len(scored)
         bins: list[list[tuple[float, int]]] = [[] for _ in range(ece_bins)]
@@ -117,12 +133,12 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
     else:
         fields.update({"brier": "NOT_COMPUTABLE", "log_loss": "NOT_COMPUTABLE", "ece": "NOT_COMPUTABLE"})
 
-    hold_value = sum(holds) / len(holds) if holds else None
-    bias_value = sum(biases) / len(biases) if biases else None
-    stale_rate = sum(stale_values) / len(stale_values) if stale_values else None
-    fields["hold"] = "COMPUTED" if holds else "NOT_COMPUTABLE"
-    fields["bias"] = "COMPUTED" if biases else "NOT_COMPUTABLE"
-    fields["stale_rate"] = "COMPUTED" if stale_values else "NOT_COMPUTABLE"
+    hold_value = sum(holds) / len(holds) if len(holds) >= minimum_sample else None
+    bias_value = sum(biases) / len(biases) if len(biases) >= minimum_sample else None
+    stale_rate = sum(stale_values) / len(stale_values) if len(stale_values) >= minimum_sample else None
+    fields["hold"] = "COMPUTED" if len(holds) >= minimum_sample else "NOT_COMPUTABLE"
+    fields["bias"] = "COMPUTED" if len(biases) >= minimum_sample else "NOT_COMPUTABLE"
+    fields["stale_rate"] = "COMPUTED" if len(stale_values) >= minimum_sample else "NOT_COMPUTABLE"
     computed_any = any(value == "COMPUTED" for value in fields.values())
     return BookmakerFingerprint(
         status="COMPUTED" if computed_any else "NOT_COMPUTABLE",
@@ -136,6 +152,7 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
         bias=bias_value,
         stale_rate=stale_rate,
         fields=fields,
+        field_sample_sizes=field_sample_sizes,
         reason=None if computed_any else "no supported evidence fields supplied",
         source_provenance=provenance,
     )

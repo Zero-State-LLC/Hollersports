@@ -53,6 +53,8 @@ def weighted_consensus(
     params = dict(method_parameters or {})
     accum: dict[str, float] = {}
     raw_weight_by_book: dict[str, float] = {}
+    included: list[tuple[dict[str, float], float]] = []
+    expected_selections: set[str] | None = None
     provenance: list[dict[str, Any]] = []
     reasons: list[str] = []
 
@@ -69,6 +71,16 @@ def weighted_consensus(
         if d.status != "COMPUTED":
             reasons.append(f"{quote.bookmaker}: {d.reason or 'de-vig not computable'}")
             continue
+        selections = set(d.fair_probabilities)
+        if expected_selections is None:
+            expected_selections = selections
+        elif selections != expected_selections:
+            return ConsensusResult(
+                status="NOT_COMPUTABLE",
+                bookmakers_observed=sorted({q.bookmaker for q in quotes}),
+                source_provenance=provenance,
+                reason=f"{quote.bookmaker}: selection set does not match consensus market",
+            )
         weight, supplied, weight_reason = _quote_weight(quote, factors)
         provenance[-1]["weight_factors_supplied"] = supplied
         provenance[-1]["calibration_status"] = "SUPPLIED" if "calibration" in supplied else "NOT_COMPUTABLE"
@@ -76,6 +88,7 @@ def weighted_consensus(
             reasons.append(f"{quote.bookmaker}: {weight_reason or 'invalid weight'}")
             continue
         raw_weight_by_book[quote.bookmaker] = raw_weight_by_book.get(quote.bookmaker, 0.0) + weight
+        included.append((d.fair_probabilities, weight))
         for selection, probability in d.fair_probabilities.items():
             accum[selection] = accum.get(selection, 0.0) + probability * weight
 
@@ -89,14 +102,23 @@ def weighted_consensus(
         return ConsensusResult(status="NOT_COMPUTABLE", raw_weights=raw_weight_by_book, bookmakers_observed=sorted({q.bookmaker for q in quotes}), source_provenance=provenance, reason="invalid consensus probabilities")
     probabilities = {k: v / prob_total for k, v in probabilities.items()}
     normalized_weights = {book: weight / total_weight for book, weight in raw_weight_by_book.items()}
-    entropy = -sum(w * math.log(w) for w in normalized_weights.values() if w > 0.0)
-    effective = math.exp(entropy)
+    weight_entropy = -sum(w * math.log(w) for w in normalized_weights.values() if w > 0.0)
+    effective = math.exp(weight_entropy)
+    disagreement = 0.0
+    for fair, weight in included:
+        for selection, probability in fair.items():
+            reference = probabilities[selection]
+            if probability > 0.0 and reference > 0.0:
+                disagreement += (weight / total_weight) * probability * math.log(probability / reference)
+    selection_count = len(probabilities)
+    entropy = disagreement / math.log(selection_count) if selection_count > 1 else 0.0
     return ConsensusResult(
         status="COMPUTED",
         probabilities=dict(sorted(probabilities.items())),
         weights=dict(sorted(normalized_weights.items())),
         raw_weights=dict(sorted(raw_weight_by_book.items())),
         entropy=entropy,
+        weight_entropy=weight_entropy,
         effective_book_count=effective,
         bookmakers_observed=sorted({q.bookmaker for q in quotes}),
         source_provenance=provenance,

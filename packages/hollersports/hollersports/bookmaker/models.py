@@ -99,6 +99,7 @@ class ConsensusResult(GovernanceFields):
     weights: dict[str, float] = Field(default_factory=dict)
     raw_weights: dict[str, float] = Field(default_factory=dict)
     entropy: float | None = None
+    weight_entropy: float | None = None
     effective_book_count: float | None = None
     bookmakers_observed: list[str] = Field(default_factory=list)
     source_provenance: list[dict[str, Any]] = Field(default_factory=list)
@@ -119,6 +120,7 @@ class BookmakerFingerprint(GovernanceFields):
     bias: float | None = None
     stale_rate: float | None = None
     fields: dict[str, str] = Field(default_factory=dict)
+    field_sample_sizes: dict[str, int] = Field(default_factory=dict)
     reason: str | None = None
     source_provenance: list[dict[str, Any]] = Field(default_factory=list)
 
