@@ -53,6 +53,20 @@ def test_v06_single_reconstructs_fair_probability(tmp_path):
         assert abs(sum(body["fair_probability"]["values"].values()) - 1.0) < 1e-12
         assert body["execution_authority"] is False
 
+        additive = client.post(
+            "/v1/analyze/single",
+            json={"quote": QUOTE, "devig_method": "ADDITIVE"},
+        )
+        assert additive.status_code == 200
+        assert additive.json()["fair_probability"]["method"] == "ADDITIVE"
+
+        unsupported = client.post(
+            "/v1/analyze/single",
+            json={"quote": QUOTE, "devig_method": "BOOK_CALIBRATED"},
+        )
+        assert unsupported.status_code == 200
+        assert unsupported.json()["status"] == "NOT_COMPUTABLE"
+
 
 def test_v06_parlay_unknown_dependency_is_not_computable(tmp_path):
     with TestClient(create_app(data_root=tmp_path)) as client:
@@ -91,3 +105,48 @@ def test_v06_prop_surface_repairs_inversion(tmp_path):
         probabilities = [row["survival_probability"] for row in body["surface"]["points"]]
         assert probabilities == sorted(probabilities, reverse=True)
         assert body["surface"]["weak_fit"] is True
+
+
+def test_v06_fingerprint_and_backtest_require_evidence(tmp_path):
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        fingerprint = client.post(
+            "/v1/books/book-a/fingerprint/compute",
+            json={
+                "minimum_sample": 2,
+                "rows": [
+                    {
+                        "bookmaker": "book-a",
+                        "probability": 0.6,
+                        "outcome": 1,
+                        "source": "fixture",
+                        "source_hash": "row-1",
+                    }
+                ],
+            },
+        )
+        assert fingerprint.status_code == 200
+        assert fingerprint.json()["status"] == "NOT_COMPUTABLE"
+
+        backtest = client.post(
+            "/v1/backtest/bookmaker",
+            json={
+                "minimum_sample": 2,
+                "rows": [
+                    {
+                        "row_id": "row-1",
+                        "event_id": "event-1",
+                        "market_type": "MONEYLINE",
+                        "selection": "HOME",
+                        "source": "fixture",
+                        "source_hash": "backtest-row-1",
+                        "predicted_probability": 0.6,
+                        "prediction_at": "2026-01-01T10:00:00Z",
+                    }
+                ],
+            },
+        )
+        assert backtest.status_code == 200
+        body = backtest.json()
+        assert body["status"] == "NOT_COMPUTABLE"
+        assert all(metric["status"] == "NOT_COMPUTABLE" for metric in body["metrics"])
+        assert body["capital_authority"] is False

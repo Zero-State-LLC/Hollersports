@@ -74,7 +74,7 @@ def test_weighted_consensus_uses_supplied_factors_and_no_implicit_calibration():
 def test_bookmaker_fingerprint_minimum_sample_and_field_evidence():
     small = bookmaker_fingerprint("book-a", [{"bookmaker": "book-a", "probability": 0.6, "outcome": 1}], minimum_sample=2)
     assert small.status == "NOT_COMPUTABLE"
-    assert small.reason == "minimum sample not met"
+    assert small.reason == "minimum provenance-complete sample not met"
 
     rows = []
     for i in range(20):
@@ -96,6 +96,17 @@ def test_bookmaker_fingerprint_minimum_sample_and_field_evidence():
     assert fp.fields["bias"] == "COMPUTED"
     assert fp.source_provenance[0]["source_hash"] == "row-0"
 
-    no_metrics = bookmaker_fingerprint("book-a", [{"bookmaker": "book-a"} for _ in range(20)], minimum_sample=20)
+    no_metrics = bookmaker_fingerprint(
+        "book-a",
+        [
+            {
+                "bookmaker": "book-a",
+                "source": "fixture",
+                "source_hash": f"empty-{i}",
+            }
+            for i in range(20)
+        ],
+        minimum_sample=20,
+    )
     assert no_metrics.status == "NOT_COMPUTABLE"
     assert no_metrics.fields["brier"] == "NOT_COMPUTABLE"

@@ -21,6 +21,8 @@ def _row(idx, p, outcome, *, fair=0.5, book=0.52, close=0.58, verdict="PASS", gr
         event_id=f"event-{idx}",
         market_type="MONEYLINE",
         selection="HOME",
+        source="fixture",
+        source_hash=f"source-{idx}",
         predicted_probability=p,
         outcome=outcome,
         prediction_at="2026-01-01T10:00:00Z",
@@ -53,8 +55,8 @@ def test_backtest_metrics_are_evidence_bound_and_computable():
     assert ece.status == "COMPUTABLE"
     assert ece.sample_size == 2
 
-    assert fair_calibration_error(rows).value == pytest.approx((abs(0.70 - 0.65) + abs(0.20 - 0.25)) / 2)
-    assert book_pricing_error(rows).value == pytest.approx((abs(0.70 - 0.60) + abs(0.20 - 0.30)) / 2)
+    assert fair_calibration_error(rows).value == pytest.approx(abs(((0.65 + 0.25) / 2) - 0.5))
+    assert book_pricing_error(rows).value == pytest.approx(abs(((0.60 + 0.30) / 2) - 0.5))
     assert clv_information_capture_ratio(rows).value == pytest.approx((0.05 + 0.05) / (0.03 + 0.03))
 
     discrimination = verdict_discrimination_by_group(rows)
@@ -71,6 +73,8 @@ def test_metrics_fail_closed_when_required_evidence_is_absent():
             event_id="event-1",
             market_type="MONEYLINE",
             selection="HOME",
+            source="fixture",
+            source_hash="pending-source",
             predicted_probability=0.55,
             prediction_at="2026-01-01T10:00:00Z",
         )
@@ -97,6 +101,8 @@ def test_clv_requires_closing_prices_and_temporal_evidence():
         event_id="event-1",
         market_type="MONEYLINE",
         selection="HOME",
+        source="fixture",
+        source_hash="no-close-source",
         predicted_probability=0.55,
         outcome=1,
         prediction_at="2026-01-01T10:00:00Z",
@@ -117,6 +123,8 @@ def test_backtest_row_rejects_future_leakage_and_authority():
             event_id="event-1",
             market_type="MONEYLINE",
             selection="HOME",
+            source="fixture",
+            source_hash="leaky-source",
             predicted_probability=0.55,
             outcome=1,
             prediction_at="2026-01-01T13:00:00Z",
@@ -130,6 +138,8 @@ def test_backtest_row_rejects_future_leakage_and_authority():
             event_id="event-1",
             market_type="MONEYLINE",
             selection="HOME",
+            source="fixture",
+            source_hash="authority-source",
             predicted_probability=0.55,
             prediction_at="2026-01-01T10:00:00Z",
             execution_authority=True,

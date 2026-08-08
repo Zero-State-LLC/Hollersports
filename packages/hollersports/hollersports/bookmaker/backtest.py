@@ -49,6 +49,8 @@ class BacktestRow(BaseModel):
     event_id: str = Field(min_length=1)
     market_type: str = Field(min_length=1)
     selection: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    source_hash: str = Field(min_length=1)
     predicted_probability: float = Field(gt=0.0, lt=1.0)
     outcome: int | None = Field(default=None, ge=0, le=1)
     prediction_at: datetime
@@ -128,17 +130,23 @@ def expected_calibration_error(rows: Iterable[BacktestRow], *, bins: int = 10, m
 
 
 def fair_calibration_error(rows: Iterable[BacktestRow], *, min_samples: int = 1) -> BacktestMetric:
-    usable = [r for r in _rows(rows) if r.fair_probability is not None]
+    """Absolute calibration gap between reconstructed fair belief and outcomes."""
+    usable = [r for r in _rows(rows) if r.fair_probability is not None and r.outcome is not None]
     if len(usable) < min_samples:
-        return _not("fair_calibration_error", len(usable), "fair probabilities or minimum samples absent")
-    return _metric("fair_calibration_error", sum(abs(r.predicted_probability - r.fair_probability) for r in usable) / len(usable), len(usable))
+        return _not("fair_calibration_error", len(usable), "fair probabilities, outcomes, or minimum samples absent")
+    fair_rate = sum(float(r.fair_probability) for r in usable) / len(usable)
+    outcome_rate = sum(float(r.outcome) for r in usable) / len(usable)
+    return _metric("fair_calibration_error", abs(fair_rate - outcome_rate), len(usable))
 
 
 def book_pricing_error(rows: Iterable[BacktestRow], *, min_samples: int = 1) -> BacktestMetric:
-    usable = [r for r in _rows(rows) if r.book_probability is not None]
+    """Absolute calibration gap between reconstructed book belief and outcomes."""
+    usable = [r for r in _rows(rows) if r.book_probability is not None and r.outcome is not None]
     if len(usable) < min_samples:
-        return _not("book_pricing_error", len(usable), "book probabilities or minimum samples absent")
-    return _metric("book_pricing_error", sum(abs(r.predicted_probability - r.book_probability) for r in usable) / len(usable), len(usable))
+        return _not("book_pricing_error", len(usable), "book probabilities, outcomes, or minimum samples absent")
+    book_rate = sum(float(r.book_probability) for r in usable) / len(usable)
+    outcome_rate = sum(float(r.outcome) for r in usable) / len(usable)
+    return _metric("book_pricing_error", abs(book_rate - outcome_rate), len(usable))
 
 
 def clv_information_capture_ratio(rows: Iterable[BacktestRow], *, min_samples: int = 1) -> BacktestMetric:

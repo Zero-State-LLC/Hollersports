@@ -12,9 +12,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hollersports.bookmaker import BookmakerQuote, MarketSnapshotStore, MarketSnapshotV2
-from hollersports.bookmaker.consensus import consensus_summary
-from hollersports.bookmaker.devig import proportional_devig
+from hollersports.bookmaker import BacktestRow, BookmakerQuote, MarketSnapshotStore, MarketSnapshotV2
+from hollersports.bookmaker.backtest import compute_backtest_metrics
+from hollersports.bookmaker.consensus import consensus_summary, weighted_consensus
+from hollersports.bookmaker.devig import devig
+from hollersports.bookmaker.fingerprint import bookmaker_fingerprint
 from hollersports.bookmaker.pricing_residual import pricing_residuals
 from hollersports.dependency import (
     DependencyEdge,
@@ -48,6 +50,21 @@ class SingleAnalysisRequest(BaseModel):
     quote: BookmakerQuote
     consensus_quotes: tuple[BookmakerQuote, ...] = ()
     baseline_probabilities: dict[str, float] | None = None
+    devig_method: str = "MULTIPLICATIVE"
+    devig_parameters: dict[str, Any] = Field(default_factory=dict)
+    consensus_factors: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+
+class FingerprintRequest(BaseModel):
+    rows: list[dict[str, Any]]
+    minimum_sample: int = Field(default=20, ge=1)
+    ece_bins: int = Field(default=10, ge=1, le=100)
+
+
+class BacktestRequest(BaseModel):
+    rows: list[BacktestRow]
+    minimum_sample: int = Field(default=20, ge=1)
+    ece_bins: int = Field(default=10, ge=1, le=100)
 
 
 class ParlayAnalysisRequest(BaseModel):
@@ -105,6 +122,17 @@ def get_book_fingerprint(book_id: str, request: Request) -> dict[str, Any]:
     )
 
 
+@router.post("/books/{book_id}/fingerprint/compute")
+def compute_book_fingerprint(book_id: str, body: FingerprintRequest) -> dict[str, Any]:
+    """Compute a fingerprint from caller-supplied settled historical evidence."""
+    return bookmaker_fingerprint(
+        book_id,
+        body.rows,
+        minimum_sample=body.minimum_sample,
+        ece_bins=body.ece_bins,
+    ).model_dump(mode="json")
+
+
 @router.get("/markets/{market_id}/timeline")
 def market_timeline(market_id: str, request: Request, at_or_before: datetime | None = None) -> dict[str, Any]:
     snapshots = [
@@ -142,20 +170,54 @@ def market_book_analysis(market_id: str, request: Request, at_or_before: datetim
 
 @router.post("/analyze/single")
 def analyze_single(body: SingleAnalysisRequest) -> dict[str, Any]:
-    fair = proportional_devig(body.quote.outcomes)
-    if fair is None:
-        return _envelope(schema_version="SingleAnalysisPacket.v1", status="NOT_COMPUTABLE", reason="complete paired prices are required")
+    reconstruction = devig(
+        body.quote.outcomes,
+        method=body.devig_method,
+        **body.devig_parameters,
+    )
+    if reconstruction.status != "COMPUTED":
+        return _envelope(
+            schema_version="SingleAnalysisPacket.v1",
+            status="NOT_COMPUTABLE",
+            reason=reconstruction.reason,
+            fair_probability=reconstruction.model_dump(mode="json"),
+        )
+    fair = reconstruction.fair_probabilities
     quotes = body.consensus_quotes or (body.quote,)
-    consensus = consensus_summary(quotes)
+    consensus = weighted_consensus(
+        quotes,
+        factors=body.consensus_factors or None,
+        method=body.devig_method,
+        method_parameters=body.devig_parameters,
+    ).model_dump(mode="json")
     residual = pricing_residuals(fair, body.baseline_probabilities) if body.baseline_probabilities else None
     return _envelope(
         schema_version="SingleAnalysisPacket.v1",
         status="COMPUTED",
         observation=body.quote.model_dump(mode="json"),
-        fair_probability={"method": "MULTIPLICATIVE", "values": fair},
+        fair_probability={**reconstruction.model_dump(mode="json"), "values": fair},
         consensus=consensus,
         pricing={"bookmaker_residual": residual, "status": "COMPUTED" if residual is not None else "NOT_COMPUTABLE"},
         evidence={"bookmaker": fair, "market": consensus, "context": None, "player": None, "dependency": None},
+    )
+
+
+@router.post("/backtest/bookmaker")
+def backtest_bookmaker(body: BacktestRequest) -> dict[str, Any]:
+    metrics = compute_backtest_metrics(
+        body.rows,
+        min_samples=body.minimum_sample,
+        ece_bins=body.ece_bins,
+    )
+    computable = sum(metric.status == "COMPUTABLE" for metric in metrics)
+    return _envelope(
+        schema_version="BookmakerBacktestPacket.v1",
+        status="COMPUTED" if computable else "NOT_COMPUTABLE",
+        row_count=len(body.rows),
+        minimum_sample=body.minimum_sample,
+        computable_metric_count=computable,
+        metrics=[metric.model_dump(mode="json") for metric in metrics],
+        provenance={"closing_prices_required_where_applicable": True, "settled_outcomes_required_where_applicable": True},
     )
 
 

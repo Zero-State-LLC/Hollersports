@@ -53,7 +53,13 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
     outcome/actual/won, raw_probability, overround/hold, bias, stale/stale_seconds,
     source, source_hash. Missing evidence yields NOT_COMPUTABLE fields.
     """
-    scoped = [row for row in rows if str(row.get("bookmaker", bookmaker)) == bookmaker]
+    scoped = [
+        row
+        for row in rows
+        if str(row.get("bookmaker", bookmaker)) == bookmaker
+        and str(row.get("source") or "").strip()
+        and str(row.get("source_hash") or "").strip()
+    ]
     sample_size = len(scoped)
     provenance = [_provenance(row) for row in scoped if _provenance(row)]
     if sample_size < minimum_sample:
@@ -63,7 +69,7 @@ def bookmaker_fingerprint(bookmaker: str, rows: Sequence[Mapping[str, Any]], *, 
             sample_size=sample_size,
             minimum_sample=minimum_sample,
             fields={},
-            reason="minimum sample not met",
+            reason="minimum provenance-complete sample not met",
             source_provenance=provenance,
         )
 
