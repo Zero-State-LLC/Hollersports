@@ -42,7 +42,9 @@ from hollersports.dependency import (
     DriverScenario,
     EmpiricalConditionalEvidence,
     LegProbability,
+    JointBacktestRow,
     analyze_parlay,
+    backtest_joint_probabilities,
 )
 from hollersports.props import (
     DerivedPropSurfaceObservation,
@@ -136,6 +138,14 @@ class DevigCalibrationRequest(BaseModel):
     as_of: datetime
     minimum_sample: int = Field(default=20, ge=1)
     method_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class JointBacktestRequest(BaseModel):
+    rows: list[JointBacktestRow]
+    market_class: str = Field(min_length=1)
+    modeled_method: str = Field(min_length=1)
+    as_of: datetime
+    minimum_sample: int = Field(default=20, ge=1)
 
 
 class LongitudinalRequest(BaseModel):
@@ -429,6 +439,18 @@ def backtest_devig(body: DevigCalibrationRequest) -> dict[str, Any]:
         as_of=body.as_of,
         minimum_sample=body.minimum_sample,
         method_parameters=body.method_parameters,
+    ).model_dump(mode="json")
+
+
+@router.post("/backtest/joint")
+def backtest_joint(body: JointBacktestRequest) -> dict[str, Any]:
+    """Compare a modeled joint probability against explicit independence."""
+    return backtest_joint_probabilities(
+        body.rows,
+        market_class=body.market_class,
+        modeled_method=body.modeled_method,
+        as_of=body.as_of,
+        minimum_sample=body.minimum_sample,
     ).model_dump(mode="json")
 
 

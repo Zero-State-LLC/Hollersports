@@ -96,6 +96,30 @@ def test_v06_devig_backtest_is_scoped_and_evidence_gated(tmp_path):
         assert body["execution_authority"] is False
 
 
+def test_v06_joint_backtest_compares_modeled_probability_to_independence(tmp_path):
+    def settled(row_id, outcome):
+        return {
+            "row_id": row_id, "event_id": f"event-{row_id}",
+            "market_class": "NBA/SAME_GAME_PARLAY", "leg_marginals": [0.5, 0.5],
+            "independent_probability": 0.25, "modeled_joint_probability": 0.45,
+            "modeled_method": "EMPIRICAL_CONDITIONAL", "outcome": outcome,
+            "predicted_at": "2026-01-01T20:00:00Z", "available_at": "2026-01-02T00:00:00Z",
+            "source": "settlement", "source_hash": f"hash-{row_id}",
+        }
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        response = client.post("/v1/backtest/joint", json={
+            "rows": [settled("one", 1), settled("two", 0)],
+            "market_class": "NBA/SAME_GAME_PARLAY", "modeled_method": "EMPIRICAL_CONDITIONAL",
+            "as_of": "2026-01-02T01:00:00Z", "minimum_sample": 2,
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "COMPUTED"
+        assert body["modeled_beats_independence"] is True
+        assert body["modeled_log_loss"]["value"] < body["independent_log_loss"]["value"]
+        assert body["capital_authority"] is False
+
+
 def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
     def snapshot(snapshot_id, minute, a_probability, b_probability, *, pressure=False):
         quotes = []
