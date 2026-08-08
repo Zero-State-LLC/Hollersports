@@ -9,6 +9,7 @@ from .models import (
     OutcomePrice,
 )
 from .storage import MarketSnapshotStore, append_snapshot, query_snapshots
+from .longitudinal import LongitudinalAnalysis, LongitudinalStore, LongitudinalThresholds, analyze_longitudinal_market
 
 __all__ = [
     "BacktestMetric",
@@ -18,9 +19,13 @@ __all__ = [
     "ConsensusResult",
     "DevigResult",
     "MarketSnapshotV2",
+    "LongitudinalAnalysis",
+    "LongitudinalStore",
+    "LongitudinalThresholds",
     "OutcomePrice",
     "MarketSnapshotStore",
     "append_snapshot",
+    "analyze_longitudinal_market",
     "compute_backtest_metrics",
     "query_snapshots",
 ]

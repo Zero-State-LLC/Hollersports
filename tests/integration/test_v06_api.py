@@ -68,6 +68,38 @@ def test_v06_single_reconstructs_fair_probability(tmp_path):
         assert unsupported.json()["status"] == "NOT_COMPUTABLE"
 
 
+def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
+    def snapshot(snapshot_id, minute, a_probability, b_probability, *, pressure=False):
+        quotes = []
+        for book, probability in (("book-a", a_probability), ("book-b", b_probability)):
+            metadata = {"ticket_pct": 0.3, "handle_pct": 0.5} if pressure else {}
+            quotes.append({
+                "bookmaker": book, "event_id": "event-1", "market_id": "market-long",
+                "market_type": "MONEYLINE", "fetched_at": f"2026-01-01T10:{minute:02d}:00Z",
+                "source": "fixture", "source_hash": f"{snapshot_id}-{book}", "metadata": metadata,
+                "outcomes": [{"selection": "HOME", "observed_probability": probability}],
+            })
+        return {"snapshot_id": snapshot_id, "captured_at": f"2026-01-01T10:{minute:02d}:00Z", "event_id": "event-1", "market_type": "MONEYLINE", "quotes": quotes}
+
+    with TestClient(create_app(data_root=tmp_path)) as client:
+        for body in (snapshot("s1", 0, 0.50, 0.50), snapshot("s2", 5, 0.53, 0.50, pressure=True), snapshot("s3", 8, 0.53, 0.53)):
+            assert client.post("/v1/markets/snapshots", json=body).status_code == 200
+        response = client.post("/v1/markets/market-long/longitudinal", json={
+            "analysis_id": "long-1", "selection": "HOME", "as_of": "2026-01-01T10:10:00Z",
+            "analyzed_at": "2026-01-01T10:11:00Z", "thresholds": {
+                "minimum_probability_move": 0.01, "follow_window_seconds": 600,
+                "minimum_pressure_imbalance": 0.1, "maximum_resistant_move": 0.005,
+            },
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()["analysis"]
+        assert body["leader_counts"] == {"book-a": 1}
+        assert body["follow_counts"] == {"book-b": 1}
+        assert all(item["causal_attribution"] == "UNKNOWN" for item in body["pressure"])
+        health = client.get("/v1/health/bookmaker-longitudinal").json()
+        assert health["status"] == "PASS"
+
+
 def test_v06_parlay_unknown_dependency_is_not_computable(tmp_path):
     with TestClient(create_app(data_root=tmp_path)) as client:
         response = client.post(

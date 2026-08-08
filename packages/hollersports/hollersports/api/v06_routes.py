@@ -12,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from hollersports.bookmaker import BacktestRow, BookmakerQuote, MarketSnapshotStore, MarketSnapshotV2
+from hollersports.bookmaker import BacktestRow, BookmakerQuote, LongitudinalStore, LongitudinalThresholds, MarketSnapshotStore, MarketSnapshotV2, analyze_longitudinal_market
 from hollersports.bookmaker.backtest import compute_backtest_metrics
 from hollersports.bookmaker.consensus import consensus_summary, weighted_consensus
 from hollersports.bookmaker.devig import devig
@@ -118,6 +118,14 @@ class BacktestRequest(BaseModel):
     rows: list[BacktestRow]
     minimum_sample: int = Field(default=20, ge=1)
     ece_bins: int = Field(default=10, ge=1, le=100)
+
+
+class LongitudinalRequest(BaseModel):
+    analysis_id: str = Field(min_length=1)
+    selection: str = Field(min_length=1)
+    as_of: datetime
+    analyzed_at: datetime
+    thresholds: LongitudinalThresholds
 
 
 class ParlayAnalysisRequest(BaseModel):
@@ -255,6 +263,26 @@ def market_book_analysis(market_id: str, request: Request, at_or_before: datetim
         consensus=consensus_summary(quotes),
         provenance={"snapshot_fingerprint": latest.fingerprint, "captured_at": latest.captured_at},
     )
+
+
+@router.post("/markets/{market_id}/longitudinal")
+def longitudinal_market_analysis(market_id: str, body: LongitudinalRequest, request: Request) -> dict[str, Any]:
+    analysis = analyze_longitudinal_market(_snapshot_store(request).query(end_at=body.as_of), market_id, body.selection, body.as_of, body.thresholds)
+    try:
+        record = LongitudinalStore(request.app.state.data_root).append(body.analysis_id, body.analyzed_at, analysis)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return record.model_dump(mode="json")
+
+
+@router.get("/health/bookmaker-longitudinal")
+def longitudinal_health(request: Request) -> dict[str, Any]:
+    store = LongitudinalStore(request.app.state.data_root)
+    try:
+        records, issues = store.records(), store.integrity_issues()
+    except (ValueError, OSError) as exc:
+        return _envelope(schema_version="BookmakerLongitudinalHealth.v1", status="NOT_COMPUTABLE", integrity_issues=[str(exc)])
+    return _envelope(schema_version="BookmakerLongitudinalHealth.v1", status="PASS" if not issues else "NOT_COMPUTABLE", analysis_count=len(records), integrity_issues=issues, causal_pressure_attribution="UNKNOWN")
 
 
 @router.post("/analyze/single")
