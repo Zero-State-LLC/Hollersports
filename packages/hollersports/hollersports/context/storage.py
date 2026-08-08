@@ -41,7 +41,7 @@ _EXPECTED_TYPES: dict[str, type[BaseModel]] = {
 
 
 class ContextObservation(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     observation_id: str = Field(min_length=1)
     event_id: str = Field(min_length=1)
@@ -54,6 +54,18 @@ class ContextObservation(BaseModel):
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unknown_payload_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict) and isinstance(data.get("payload"), dict):
+            context_type = data.get("context_type")
+            expected = _EXPECTED_TYPES.get(context_type)
+            if expected is not None:
+                unknown = set(data["payload"]) - set(expected.model_fields)
+                if unknown:
+                    raise ValueError(f"unknown {context_type} payload fields: {sorted(unknown)}")
+        return data
 
     @field_validator("observed_at")
     @classmethod
@@ -89,7 +101,7 @@ class ContextObservation(BaseModel):
 
 
 class ContextDerivation(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     derivation_id: str = Field(min_length=1)
     observation_id: str = Field(min_length=1)
@@ -147,6 +159,17 @@ class ContextStore:
         for field in ("event_id", "entity_id", "context_type", "observed_at"):
             if getattr(observation, field) != getattr(derivation, field):
                 raise ContextStorageError(f"derivation {field} must match observation")
+        if derivation.result.provenance != getattr(observation.payload, "provenance", []):
+            raise ContextStorageError("derivation provenance must exactly match source observation evidence")
+        expected_signal = {
+            "PLAYER": "player_state_transform",
+            "TRAVEL": "travel_load",
+            "OPPORTUNITY": "opportunity_shift",
+            "COACHING": "coach_response",
+            "VENUE": "venue_residual",
+        }[observation.context_type]
+        if derivation.result.signal != expected_signal:
+            raise ContextStorageError("derivation signal does not match context_type")
         if any(item.derivation_id == derivation.derivation_id for item in self.derivations()):
             raise ContextStorageError(f"duplicate derivation_id: {derivation.derivation_id}")
         self._append(self.derivations_path, derivation)

@@ -64,3 +64,22 @@ def test_context_derivation_requires_matching_immutable_observation(tmp_path):
     )
     with pytest.raises(ContextStorageError, match="fingerprint"):
         store.append_derivation(bad)
+
+
+def test_context_packets_reject_unknown_raw_fields_and_unrelated_derivations(tmp_path):
+    raw = observation().model_dump(mode="json")
+    raw["payload"]["closing_price"] = 0.7
+    with pytest.raises(ValueError, match="unknown TRAVEL payload fields"):
+        ContextObservation.model_validate(raw)
+
+    store = ContextStore(tmp_path)
+    item = observation()
+    store.append_observation(item)
+    unrelated = ContextDerivation(
+        derivation_id="derived-unrelated", observation_id=item.observation_id,
+        observation_fingerprint=item.fingerprint, event_id=item.event_id, entity_id=item.entity_id,
+        context_type=item.context_type, observed_at=item.observed_at, derived_at=item.observed_at,
+        result=compute_travel_load(item.payload).model_copy(update={"signal": "venue_residual"}),
+    )
+    with pytest.raises(ContextStorageError, match="signal"):
+        store.append_derivation(unrelated)
