@@ -80,6 +80,23 @@ export function getHealth() {
   return request<Json>("/v1/health");
 }
 
+/** V0.6 evidence-bound intelligence surfaces. Read-only and advisory-only. */
+export function getV06Books() {
+  return request<Json>("/v1/books");
+}
+
+export function getV06Health(domain: "bookmaker" | "context" | "dependency" | "structural" | "promotions") {
+  return request<Json>(`/v1/health/${domain}`);
+}
+
+export function getV06Models() {
+  return request<Json>("/v1/models");
+}
+
+export function getV06DevigCalibrations() {
+  return request<Json>("/v1/calibration/devig");
+}
+
 export function postIngest(fixture = "day001") {
   return request<Json>("/v1/runs/ingest", {
     method: "POST",

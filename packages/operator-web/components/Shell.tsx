@@ -7,6 +7,7 @@ import { ComplianceGate } from "@/components/ComplianceGate";
 
 const NAV = [
   { href: "/", label: "Today" },
+  { href: "/intelligence", label: "Intelligence" },
   { href: "/book", label: "Paper book" },
   { href: "/health", label: "Health" },
 ] as const;

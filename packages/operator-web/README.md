@@ -38,6 +38,7 @@ npm start
 | Route | Role |
 |-------|------|
 | **Today** | Overview strip + **action board**: fixture day · free-first live · paper loop |
+| **Intelligence** | V0.6 evidence topology, ledger health, shadow promotions, and operator product surfaces |
 | **Paper book** | Candidates (select + paper), paper portfolio, settlement queue — **not** a sportsbook |
 | **Health** | Anchored panels: Research ML, sources, performance, promotion, calibration, reliability, history, run log |
 
