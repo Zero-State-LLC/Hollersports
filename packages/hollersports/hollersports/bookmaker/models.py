@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+
 def utc_now() -> datetime:
     """Return an aware UTC timestamp for locally captured records."""
     return datetime.now(timezone.utc)
@@ -17,17 +18,20 @@ def _aware(value: datetime) -> datetime:
         raise ValueError("timestamp must include a timezone")
     return value
 
+
 class GovernanceFields(BaseModel):
     """Governance envelope enforcing SHADOW_ONLY, ADVISORY_ONLY, and no authority."""
     mode: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
     advisory_mode: Literal["ADVISORY_ONLY"] = "ADVISORY_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False
+
     @model_validator(mode="after")
     def _guard(self) -> "GovernanceFields":
         if self.mode != "SHADOW_ONLY" or self.advisory_mode != "ADVISORY_ONLY" or self.capital_authority or self.execution_authority:
             raise ValueError("bookmaker domain must be SHADOW_ONLY/ADVISORY_ONLY with capital/execution false")
         return self
+
 
 class OutcomePrice(BaseModel):
     """Observed price for one outcome selection."""
@@ -37,16 +41,20 @@ class OutcomePrice(BaseModel):
     decimal_odds: float | None = Field(default=None, gt=1.0)
     point: float | None = None
     observed_probability: float | None = Field(default=None, gt=0.0, lt=1.0)
+
     @field_validator("american_odds")
     @classmethod
     def _valid_american(cls, value: int | None) -> int | None:
-        if value is not None and value in (-100, 0): raise ValueError("invalid american odds")
+        if value is not None and value in (-100, 0):
+            raise ValueError("invalid american odds")
         return value
+
     @model_validator(mode="after")
     def _has_price(self) -> "OutcomePrice":
         if self.american_odds is None and self.decimal_odds is None and self.observed_probability is None:
             raise ValueError("observed price required")
         return self
+
 
 class BookmakerQuote(GovernanceFields):
     """Observed quote from one bookmaker for one market."""
@@ -66,6 +74,54 @@ class BookmakerQuote(GovernanceFields):
     @classmethod
     def _aware_timestamps(cls, value: datetime | None) -> datetime | None:
         return None if value is None else _aware(value)
+
+
+class DevigResult(GovernanceFields):
+    """Fail-closed packet for one deterministic de-vig calculation."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    method: Literal["MULTIPLICATIVE", "ADDITIVE", "POWER", "SHIN"]
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    raw_probabilities: dict[str, float] = Field(default_factory=dict)
+    overround: float | None = None
+    fair_probabilities: dict[str, float] = Field(default_factory=dict)
+    uncertainty: float | None = None
+    reason: str | None = None
+    source: str | None = None
+    source_hash: str | None = None
+
+
+class ConsensusResult(GovernanceFields):
+    """Weighted consensus packet with provenance and concentration diagnostics."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    probabilities: dict[str, float] = Field(default_factory=dict)
+    weights: dict[str, float] = Field(default_factory=dict)
+    raw_weights: dict[str, float] = Field(default_factory=dict)
+    entropy: float | None = None
+    effective_book_count: float | None = None
+    bookmakers_observed: list[str] = Field(default_factory=list)
+    source_provenance: list[dict[str, Any]] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class BookmakerFingerprint(GovernanceFields):
+    """Historical bookmaker diagnostics calculated only from supplied evidence."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    bookmaker: str
+    sample_size: int
+    minimum_sample: int
+    brier: float | None = None
+    log_loss: float | None = None
+    ece: float | None = None
+    hold: float | None = None
+    bias: float | None = None
+    stale_rate: float | None = None
+    fields: dict[str, str] = Field(default_factory=dict)
+    reason: str | None = None
+    source_provenance: list[dict[str, Any]] = Field(default_factory=list)
+
 
 class MarketSnapshotV2(GovernanceFields):
     """Immutable append-only market_snapshot.v2 record."""
