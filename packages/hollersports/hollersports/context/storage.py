@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import fcntl
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -48,6 +49,7 @@ class ContextObservation(BaseModel):
     entity_id: str = Field(min_length=1)
     context_type: ContextType
     observed_at: datetime
+    recorded_at: datetime
     source: str = Field(min_length=1)
     source_hash: str = Field(min_length=1)
     payload: ContextPayload
@@ -67,7 +69,7 @@ class ContextObservation(BaseModel):
                     raise ValueError(f"unknown {context_type} payload fields: {sorted(unknown)}")
         return data
 
-    @field_validator("observed_at")
+    @field_validator("observed_at", "recorded_at")
     @classmethod
     def timezone_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
@@ -78,6 +80,8 @@ class ContextObservation(BaseModel):
     def closed_and_coherent(self) -> "ContextObservation":
         if self.capital_authority or self.execution_authority:
             raise ValueError("context observations cannot authorize capital or execution")
+        if self.recorded_at < self.observed_at:
+            raise ValueError("recorded_at cannot precede observed_at")
         expected = _EXPECTED_TYPES[self.context_type]
         if not isinstance(self.payload, expected):
             raise ValueError(f"payload must be {expected.__name__} for {self.context_type}")
@@ -110,13 +114,14 @@ class ContextDerivation(BaseModel):
     entity_id: str = Field(min_length=1)
     context_type: ContextType
     observed_at: datetime
+    recorded_at: datetime
     derived_at: datetime
     result: ContextResult
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
     capital_authority: bool = False
     execution_authority: bool = False
 
-    @field_validator("observed_at", "derived_at")
+    @field_validator("observed_at", "recorded_at", "derived_at")
     @classmethod
     def timezone_aware(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
@@ -127,8 +132,10 @@ class ContextDerivation(BaseModel):
     def closed_and_temporal(self) -> "ContextDerivation":
         if self.capital_authority or self.execution_authority:
             raise ValueError("context derivations cannot authorize capital or execution")
-        if self.derived_at < self.observed_at:
-            raise ValueError("derived_at cannot precede observed_at")
+        if self.recorded_at < self.observed_at:
+            raise ValueError("recorded_at cannot precede observed_at")
+        if self.derived_at < self.recorded_at:
+            raise ValueError("derived_at cannot precede recorded_at")
         return self
 
 
@@ -154,9 +161,16 @@ class ContextStore:
         observation = next((item for item in self.observations() if item.observation_id == derivation.observation_id), None)
         if observation is None:
             raise ContextStorageError("missing source context observation")
+        self._validate_derivation(observation, derivation)
+        if any(item.derivation_id == derivation.derivation_id for item in self.derivations()):
+            raise ContextStorageError(f"duplicate derivation_id: {derivation.derivation_id}")
+        self._append(self.derivations_path, derivation)
+
+    @staticmethod
+    def _validate_derivation(observation: ContextObservation, derivation: ContextDerivation) -> None:
         if observation.fingerprint != derivation.observation_fingerprint:
             raise ContextStorageError("observation fingerprint mismatch")
-        for field in ("event_id", "entity_id", "context_type", "observed_at"):
+        for field in ("event_id", "entity_id", "context_type", "observed_at", "recorded_at"):
             if getattr(observation, field) != getattr(derivation, field):
                 raise ContextStorageError(f"derivation {field} must match observation")
         if derivation.result.provenance != getattr(observation.payload, "provenance", []):
@@ -170,20 +184,48 @@ class ContextStore:
         }[observation.context_type]
         if derivation.result.signal != expected_signal:
             raise ContextStorageError("derivation signal does not match context_type")
-        if any(item.derivation_id == derivation.derivation_id for item in self.derivations()):
-            raise ContextStorageError(f"duplicate derivation_id: {derivation.derivation_id}")
-        self._append(self.derivations_path, derivation)
+
+    def append_bundle(self, observation: ContextObservation, derivation: ContextDerivation) -> tuple[str, str]:
+        """Append an observation and derivation under one process lock with rollback on failure."""
+        lock_path = self.observations_path.parent.parent / ".context.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            if any(item.observation_id == observation.observation_id for item in self.observations()):
+                raise DuplicateContextObservationError(f"duplicate observation_id: {observation.observation_id}")
+            if any(item.derivation_id == derivation.derivation_id for item in self.derivations()):
+                raise ContextStorageError(f"duplicate derivation_id: {derivation.derivation_id}")
+            if derivation.observation_id != observation.observation_id:
+                raise ContextStorageError("derivation observation_id must match observation")
+            self._validate_derivation(observation, derivation)
+            observation_size = self.observations_path.stat().st_size if self.observations_path.exists() else 0
+            derivation_size = self.derivations_path.stat().st_size if self.derivations_path.exists() else 0
+            try:
+                self._append(self.observations_path, observation)
+                self._append(self.derivations_path, derivation)
+            except Exception:
+                self._truncate(self.observations_path, observation_size)
+                self._truncate(self.derivations_path, derivation_size)
+                raise
+            return observation.fingerprint, stable_fingerprint(derivation)
 
     def latest_at_or_before(self, *, event_id: str, entity_id: str, context_type: ContextType, as_of: datetime) -> tuple[ContextObservation, ContextDerivation | None] | None:
         if as_of.tzinfo is None or as_of.utcoffset() is None:
             raise ValueError("as_of must be timezone-aware")
         cutoff = as_of.astimezone(timezone.utc)
-        candidates = [item for item in self.observations() if item.event_id == event_id and item.entity_id == entity_id and item.context_type == context_type and item.observed_at <= cutoff]
+        candidates = [item for item in self.observations() if item.event_id == event_id and item.entity_id == entity_id and item.context_type == context_type and item.observed_at <= cutoff and item.recorded_at <= cutoff]
         if not candidates:
             return None
         observation = max(candidates, key=lambda item: item.observed_at)
         derived = [item for item in self.derivations() if item.observation_id == observation.observation_id and item.derived_at <= cutoff]
         return observation, max(derived, key=lambda item: item.derived_at, default=None)
+
+    @staticmethod
+    def _truncate(path: Path, size: int) -> None:
+        if not path.exists():
+            return
+        with path.open("r+b") as handle:
+            handle.truncate(size)
 
     @staticmethod
     def _append(path: Path, value: BaseModel) -> None:

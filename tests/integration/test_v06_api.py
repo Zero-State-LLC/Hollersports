@@ -181,6 +181,7 @@ def test_v06_context_persistence_temporal_replay_and_evidence_separation(tmp_pat
     observation = {
         "observation_id": "context-1", "event_id": "event-1", "entity_id": "team-a",
         "context_type": "TRAVEL", "observed_at": "2026-01-01T10:00:00Z",
+        "recorded_at": "2026-01-01T10:00:30Z",
         "source": "fixture", "source_hash": "context-source-hash",
         "payload": {
             "team_id": "team-a", "miles_last_72h": 1200, "timezone_delta_hours": 2,
@@ -201,6 +202,9 @@ def test_v06_context_persistence_temporal_replay_and_evidence_separation(tmp_pat
         assert replay["status"] == "COMPUTED"
         assert replay["evidence"]["bookmaker"] is None
         assert replay["evidence"]["dependency"] is None
+        health = client.get("/v1/health/context").json()
+        assert health["status"] == "PASS"
+        assert health["recorded_at_gate"] is True
 
 
 def test_v06_recovery_requires_explicit_peer_and_fails_closed_without_samples(tmp_path):

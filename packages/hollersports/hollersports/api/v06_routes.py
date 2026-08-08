@@ -397,11 +397,11 @@ def record_context_observation(body: ContextObservationRequest, request: Request
             entity_id=body.observation.entity_id,
             context_type=body.observation.context_type,
             observed_at=body.observation.observed_at,
+            recorded_at=body.observation.recorded_at,
             derived_at=body.derived_at,
             result=result,
         )
-        fingerprint = store.append_observation(body.observation)
-        store.append_derivation(derivation)
+        fingerprint, _ = store.append_bundle(body.observation, derivation)
     except (ContextStorageError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _envelope(schema_version="ContextPersistenceReceipt.v1", status=result.status, observation_fingerprint=fingerprint, derivation=derivation.model_dump(mode="json"))
@@ -418,7 +418,7 @@ def get_context_analysis(event_id: str, entity_id: str, context_type: str, reque
     return _envelope(
         schema_version="ContextAnalysisPacket.v1",
         status=derivation.result.status if derivation is not None else "NOT_COMPUTABLE",
-        evidence={"context": observation.model_dump(mode="json"), "bookmaker": None, "market": None, "player": observation.payload.model_dump(mode="json") if context_type == "PLAYER" else None, "dependency": None},
+        evidence={"context": observation.model_dump(mode="json"), "bookmaker": None, "market": None, "player": {"observation_id": observation.observation_id, "fingerprint": observation.fingerprint} if context_type == "PLAYER" else None, "dependency": None},
         derivation=derivation.model_dump(mode="json") if derivation is not None else None,
         reason=None if derivation is not None else "no derivation available at or before cutoff",
     )
@@ -443,3 +443,18 @@ def bookmaker_health(request: Request) -> dict[str, Any]:
 @router.get("/health/dependency")
 def dependency_health() -> dict[str, Any]:
     return _envelope(schema_version="DependencyHealthPacket.v1", status="PASS", unknown_dependency_policy="NOT_COMPUTABLE", naive_multiplication_default=False)
+
+
+@router.get("/health/context")
+def context_health(request: Request) -> dict[str, Any]:
+    store = _context_store(request)
+    observations = store.observations()
+    derivations = store.derivations()
+    observation_ids = {item.observation_id for item in observations}
+    orphan_count = sum(item.observation_id not in observation_ids for item in derivations)
+    return _envelope(
+        schema_version="ContextHealthPacket.v1",
+        status="PASS" if orphan_count == 0 else "NOT_COMPUTABLE",
+        observation_count=len(observations), derivation_count=len(derivations), orphan_derivation_count=orphan_count,
+        recorded_at_gate=True, bundled_write_lock=True, unknown_payload_fields_rejected=True,
+    )
