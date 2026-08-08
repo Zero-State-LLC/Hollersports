@@ -58,3 +58,34 @@ def test_dependency_store_rejects_tampered_deterministic_analysis(tmp_path):
     with pytest.raises(DependencyStorageError, match="deterministic derivation"):
         store.append_bundle(item, tampered)
     assert store.observations() == []
+
+
+def test_dependency_bundle_rolls_back_second_write_failure(tmp_path, monkeypatch):
+    store = DependencyStore(tmp_path)
+    item = observation()
+    analysis = store.derive(item, "analysis-1", datetime(2026, 1, 1, 10, 5, tzinfo=timezone.utc))
+    original = store._append
+    calls = 0
+
+    def fail_second(path, value):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("simulated analysis write failure")
+        original(path, value)
+
+    monkeypatch.setattr(store, "_append", fail_second)
+    with pytest.raises(OSError, match="simulated"):
+        store.append_bundle(item, analysis)
+    assert store.observations() == []
+    assert store.analyses() == []
+
+
+def test_dependency_health_validation_detects_persisted_fingerprint_tamper(tmp_path):
+    store = DependencyStore(tmp_path)
+    item = observation()
+    analysis = store.derive(item, "analysis-1", datetime(2026, 1, 1, 10, 5, tzinfo=timezone.utc))
+    store.append_bundle(item, analysis)
+    raw = store.analyses_path.read_text(encoding="utf-8").replace(item.fingerprint, "0" * 64)
+    store.analyses_path.write_text(raw, encoding="utf-8")
+    assert any("source observation link is invalid" in issue for issue in store.integrity_issues())

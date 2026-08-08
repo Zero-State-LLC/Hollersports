@@ -73,3 +73,12 @@ def test_empirical_dependency_without_sample_size_fails_closed():
         ),
     )
     assert result.status == Computability.NOT_COMPUTABLE
+
+
+def test_invalid_graph_topology_fails_closed_for_direct_analysis():
+    duplicate_legs = [_legs()[0], _legs()[0]]
+    assert joint_probability(duplicate_legs, method=DependencyMethod.INDEPENDENT, explicitly_allow_independence=True).status == Computability.NOT_COMPUTABLE
+    dangling = [DependencyEdge(source_leg_id="a", target_leg_id="missing")]
+    result = joint_probability(_legs(), dangling, method=DependencyMethod.INDEPENDENT, explicitly_allow_independence=True)
+    assert result.status == Computability.NOT_COMPUTABLE
+    assert "edge endpoint missing" in result.reason

@@ -26,6 +26,8 @@ def empirical_conditional_joint_probability(legs: list[LegProbability], evidence
         return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="empirical conditional evidence is required")
     if evidence.sample_size is None or evidence.sample_size <= 0:
         return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="empirical conditional evidence requires a positive sample size")
+    if len(evidence.ordered_leg_ids) != len(set(evidence.ordered_leg_ids)):
+        return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="conditional leg ordering must not contain duplicates")
     by_id = {leg.leg_id: leg for leg in legs}
     if set(evidence.ordered_leg_ids) != set(by_id):
         return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="conditional evidence must cover exactly all legs")
@@ -46,6 +48,8 @@ def empirical_conditional_joint_probability(legs: list[LegProbability], evidence
 def deterministic_driver_joint_probability(legs: list[LegProbability], scenarios: list[DriverScenario] | None) -> JointProbabilityResult:
     if not scenarios:
         return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="shared-driver scenario evidence is required")
+    if len({scenario.scenario_id for scenario in scenarios}) != len(scenarios):
+        return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="driver scenario IDs must be unique")
     leg_ids = {leg.leg_id for leg in legs}
     total_weight = sum(s.probability for s in scenarios)
     if abs(total_weight - 1.0) > 1e-9:
@@ -62,7 +66,8 @@ def deterministic_driver_joint_probability(legs: list[LegProbability], scenarios
 def joint_probability(legs: list[LegProbability], edges: list[DependencyEdge] | None = None, *, method: DependencyMethod | None = None, explicitly_allow_independence: bool = False, empirical_evidence: EmpiricalConditionalEvidence | None = None, driver_scenarios: list[DriverScenario] | None = None) -> JointProbabilityResult:
     graph = inspect_dependency_graph(legs, edges or [])
     if graph.status is Computability.NOT_COMPUTABLE:
-        return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="missing required dependency: " + ", ".join(graph.missing_required_dependencies))
+        details = graph.validation_errors or ["missing required dependency: " + ", ".join(graph.missing_required_dependencies)]
+        return JointProbabilityResult(status=Computability.NOT_COMPUTABLE, reason="; ".join(details))
     if method == DependencyMethod.INDEPENDENT:
         return independent_joint_probability(legs, explicitly_allowed=explicitly_allow_independence)
     if method == DependencyMethod.EMPIRICAL_CONDITIONAL:
