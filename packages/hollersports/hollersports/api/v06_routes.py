@@ -448,13 +448,19 @@ def dependency_health() -> dict[str, Any]:
 @router.get("/health/context")
 def context_health(request: Request) -> dict[str, Any]:
     store = _context_store(request)
-    observations = store.observations()
-    derivations = store.derivations()
-    observation_ids = {item.observation_id for item in observations}
-    orphan_count = sum(item.observation_id not in observation_ids for item in derivations)
+    try:
+        observations = store.observations()
+        derivations = store.derivations()
+        issues = store.integrity_issues()
+    except (ValueError, OSError) as exc:
+        return _envelope(
+            schema_version="ContextHealthPacket.v1", status="NOT_COMPUTABLE",
+            observation_count=None, derivation_count=None, integrity_issues=[f"unreadable context ledger: {exc}"],
+            recorded_at_gate=True, api_bundled_write_lock=True, unknown_payload_fields_rejected=True,
+        )
     return _envelope(
         schema_version="ContextHealthPacket.v1",
-        status="PASS" if orphan_count == 0 else "NOT_COMPUTABLE",
-        observation_count=len(observations), derivation_count=len(derivations), orphan_derivation_count=orphan_count,
-        recorded_at_gate=True, bundled_write_lock=True, unknown_payload_fields_rejected=True,
+        status="PASS" if not issues else "NOT_COMPUTABLE",
+        observation_count=len(observations), derivation_count=len(derivations), integrity_issues=issues,
+        recorded_at_gate=True, api_bundled_write_lock=True, unknown_payload_fields_rejected=True,
     )

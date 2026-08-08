@@ -220,6 +220,29 @@ class ContextStore:
         derived = [item for item in self.derivations() if item.observation_id == observation.observation_id and item.derived_at <= cutoff]
         return observation, max(derived, key=lambda item: item.derived_at, default=None)
 
+    def integrity_issues(self) -> list[str]:
+        """Validate persisted IDs and every derivation-to-observation invariant."""
+        observations = self.observations()
+        derivations = self.derivations()
+        issues: list[str] = []
+        observation_ids = [item.observation_id for item in observations]
+        derivation_ids = [item.derivation_id for item in derivations]
+        if len(observation_ids) != len(set(observation_ids)):
+            issues.append("duplicate observation_id")
+        if len(derivation_ids) != len(set(derivation_ids)):
+            issues.append("duplicate derivation_id")
+        by_id = {item.observation_id: item for item in observations}
+        for derivation in derivations:
+            observation = by_id.get(derivation.observation_id)
+            if observation is None:
+                issues.append(f"orphan derivation: {derivation.derivation_id}")
+                continue
+            try:
+                self._validate_derivation(observation, derivation)
+            except ContextStorageError as exc:
+                issues.append(f"invalid derivation {derivation.derivation_id}: {exc}")
+        return issues
+
     @staticmethod
     def _truncate(path: Path, size: int) -> None:
         if not path.exists():

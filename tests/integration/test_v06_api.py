@@ -205,6 +205,16 @@ def test_v06_context_persistence_temporal_replay_and_evidence_separation(tmp_pat
         health = client.get("/v1/health/context").json()
         assert health["status"] == "PASS"
         assert health["recorded_at_gate"] is True
+        assert health["integrity_issues"] == []
+
+        derivations_path = tmp_path / "context" / "derivations" / "derivations.jsonl"
+        row = derivations_path.read_text(encoding="utf-8").replace(
+            recorded.json()["observation_fingerprint"], "0" * 64
+        )
+        derivations_path.write_text(row, encoding="utf-8")
+        tampered = client.get("/v1/health/context").json()
+        assert tampered["status"] == "NOT_COMPUTABLE"
+        assert any("fingerprint mismatch" in issue for issue in tampered["integrity_issues"])
 
 
 def test_v06_recovery_requires_explicit_peer_and_fails_closed_without_samples(tmp_path):
