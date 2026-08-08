@@ -9,10 +9,24 @@ Advisory only — **no real money**, **no book placement**.
 | **Playbook** | [`docs/agents/HERMES_BACKFILL.md`](agents/HERMES_BACKFILL.md) |
 | **What needs backfill?** | `make backfill-status` or `python scripts/backfill_status.py` |
 | **Run backfill** | `make backfill` |
+| **V0.6 read-only audit** | `make v06-backfill-audit` |
 | **Fixture list** | [`fixtures/MANIFEST.json`](../fixtures/MANIFEST.json) |
 | **Repo agent entry** | [`AGENTS.md`](../AGENTS.md) |
 
 Status JSON includes `needs_backfill`, `current_sample`, `target_sample`, and `suggested_command`.
+
+Before importing historical data into the V0.6 domains, run:
+
+```bash
+make v06-backfill-audit
+# strict automation gate; exits 1 until temporal V0.6 evidence is joinable
+python scripts/audit_v06_backfill.py --assert-v06-ready
+```
+
+The V0.6 auditor is read-only. It inventories market memory, settlements, prop,
+context, and dependency packets; validates required provenance; checks event joins
+and settlement ordering; and reports blockers without creating data directories.
+Existing V0.5 fixture backfill remains a separate PAPER_ONLY control workflow.
 
 ## Purpose
 

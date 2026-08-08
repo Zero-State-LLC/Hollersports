@@ -3,7 +3,7 @@ PYTHON ?= $(shell command -v python3 2>/dev/null || command -v python 2>/dev/nul
 export PYTHONPATH := packages/hollersports:$(PYTHONPATH)
 
 .PHONY: validate test test-unit test-integration test-golden test-calibration test-cov \
-	install smoke calibration-suite backfill backfill-status api web free-first free-first-day \
+	install smoke calibration-suite backfill backfill-status v06-backfill-audit api web free-first free-first-day \
 	ml-e2e ml-train ml-compete ml-retrain-check ml-doc-model ml-axial-train \
 	ml-axial-train-large ml-axial-train-transformer ml-rss-demo field-test
 
@@ -41,6 +41,9 @@ calibration-suite:
 # Hermes: see docs/agents/HERMES_BACKFILL.md — run backfill-status first.
 backfill-status:
 	$(PYTHON) scripts/backfill_status.py
+
+v06-backfill-audit:
+	$(PYTHON) scripts/audit_v06_backfill.py --data-root data --fixtures-root fixtures
 
 backfill:
 	$(PYTHON) scripts/backfill_fixtures.py --out docs/evidence/backfill_calibration.last.json
