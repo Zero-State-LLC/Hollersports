@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from hollersports.api.deps import RunStore, resolve_data_root
 from hollersports.api.routes import router
+from hollersports.api.v06_routes import router as v06_router
 
 
 def create_app(data_root: str | Path | None = None) -> FastAPI:
@@ -22,7 +23,7 @@ def create_app(data_root: str | Path | None = None) -> FastAPI:
 
     app = FastAPI(
         title="HollerSports Operator API",
-        version="0.3.0",
+        version="0.6.0",
         description="Paper-only sports market intelligence packets. No live capital.",
     )
     app.state.store = store
@@ -36,4 +37,5 @@ def create_app(data_root: str | Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(router)
+    app.include_router(v06_router)
     return app
