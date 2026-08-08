@@ -18,6 +18,7 @@ class LongitudinalThresholds(BaseModel):
     follow_window_seconds: int = Field(gt=0)
     minimum_pressure_imbalance: float = Field(gt=0, le=1)
     maximum_resistant_move: float = Field(ge=0, le=1)
+    minimum_lead_events: int = Field(default=1, ge=1)
 
 
 class BookMove(BaseModel):
@@ -28,6 +29,7 @@ class BookMove(BaseModel):
     probability_delta: float
     threshold_delta: float | None = None
     velocity_per_hour: float
+    threshold_velocity_per_hour: float | None = None
 
 
 class LeadLagEvent(BaseModel):
@@ -56,7 +58,9 @@ class LongitudinalAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     schema_version: Literal["BookmakerLongitudinalAnalysis.v1"] = "BookmakerLongitudinalAnalysis.v1"
     status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    event_id: str
     market_id: str
+    market_type: str
     selection: str
     probability_basis: Literal["RAW_IMPLIED_OBSERVATION"] = "RAW_IMPLIED_OBSERVATION"
     as_of: datetime
@@ -66,6 +70,10 @@ class LongitudinalAnalysis(BaseModel):
     leader_counts: dict[str, int] = Field(default_factory=dict)
     follow_counts: dict[str, int] = Field(default_factory=dict)
     pressure: tuple[PressureObservation, ...] = ()
+    movement_status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    lead_lag_status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    pressure_status: Literal["COMPUTED", "NOT_COMPUTABLE"]
+    metric_reasons: dict[str, str] = Field(default_factory=dict)
     reasons: tuple[str, ...] = ()
     authority: Literal["SHADOW_ONLY"] = "SHADOW_ONLY"
     mode: Literal["ADVISORY_ONLY"] = "ADVISORY_ONLY"
@@ -113,17 +121,60 @@ def _find(quote: BookmakerQuote, selection: str) -> tuple[float, float | None] |
     return None
 
 
-def analyze_longitudinal_market(snapshots: list[MarketSnapshotV2], market_id: str, selection: str, as_of: datetime, thresholds: LongitudinalThresholds) -> LongitudinalAnalysis:
+def analyze_longitudinal_market(
+    snapshots: list[MarketSnapshotV2],
+    market_id: str,
+    selection: str,
+    as_of: datetime,
+    thresholds: LongitudinalThresholds,
+    *,
+    event_id: str | None = None,
+) -> LongitudinalAnalysis:
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         raise ValueError("as_of must be timezone-aware")
     cutoff = as_of.astimezone(timezone.utc)
-    scoped = [snapshot for snapshot in snapshots if snapshot.captured_at <= cutoff and any(quote.market_id == market_id for quote in snapshot.quotes)]
+    candidates = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.captured_at <= cutoff
+        and any(quote.market_id == market_id for quote in snapshot.quotes)
+    ]
+    event_ids = {
+        quote.event_id
+        for snapshot in candidates
+        for quote in snapshot.quotes
+        if quote.market_id == market_id
+    }
+    selected_event = event_id or (next(iter(event_ids)) if len(event_ids) == 1 else None)
+    if selected_event is None:
+        reason = "event_id is required when a market_id appears in zero or multiple events"
+        return LongitudinalAnalysis(
+            status="NOT_COMPUTABLE",
+            event_id=event_id or "UNKNOWN",
+            market_id=market_id,
+            market_type="UNKNOWN",
+            selection=selection,
+            as_of=cutoff,
+            movement_status="NOT_COMPUTABLE",
+            lead_lag_status="NOT_COMPUTABLE",
+            pressure_status="NOT_COMPUTABLE",
+            metric_reasons={"movement": reason, "lead_lag": reason, "pressure": reason},
+            reasons=(reason,),
+        )
+    scoped = [
+        snapshot
+        for snapshot in candidates
+        if any(
+            quote.market_id == market_id and quote.event_id == selected_event
+            for quote in snapshot.quotes
+        )
+    ]
     scoped.sort(key=lambda item: (item.captured_at, item.snapshot_id))
     fingerprints = tuple(snapshot.fingerprint or stable_fingerprint(snapshot.model_dump(mode="json")) for snapshot in scoped)
     series: dict[str, list[tuple[datetime, float, float | None, dict]]] = {}
     for snapshot in scoped:
         for quote in snapshot.quotes:
-            if quote.market_id != market_id:
+            if quote.market_id != market_id or quote.event_id != selected_event:
                 continue
             found = _find(quote, selection)
             if found is None:
@@ -141,7 +192,15 @@ def analyze_longitudinal_market(snapshots: list[MarketSnapshotV2], market_id: st
                 continue
             delta = current[1] - previous[1]
             threshold_delta = None if previous[2] is None or current[2] is None else current[2] - previous[2]
-            moves.append(BookMove(bookmaker=bookmaker, from_time=previous[0], to_time=current[0], probability_delta=delta, threshold_delta=threshold_delta, velocity_per_hour=delta / (seconds / 3600.0)))
+            moves.append(BookMove(
+                bookmaker=bookmaker,
+                from_time=previous[0],
+                to_time=current[0],
+                probability_delta=delta,
+                threshold_delta=threshold_delta,
+                velocity_per_hour=delta / (seconds / 3600.0),
+                threshold_velocity_per_hour=None if threshold_delta is None else threshold_delta / (seconds / 3600.0),
+            ))
             if abs(delta) >= thresholds.minimum_probability_move:
                 qualifying.append((current[0], bookmaker, 1 if delta > 0 else -1))
             tickets, handle = current[3].get("ticket_pct"), current[3].get("handle_pct")
@@ -156,20 +215,57 @@ def analyze_longitudinal_market(snapshots: list[MarketSnapshotV2], market_id: st
                     pressure.append(PressureObservation(bookmaker=bookmaker, ticket_pct=ticket_value, handle_pct=handle_value, imbalance=imbalance, probability_move=delta, elasticity=elasticity, resistance_observed=abs(imbalance) >= thresholds.minimum_pressure_imbalance and abs(delta) <= thresholds.maximum_resistant_move))
     qualifying.sort()
     events: list[LeadLagEvent] = []
-    for index, (leader_time, leader, direction) in enumerate(qualifying):
-        for follower_time, follower, follower_direction in qualifying[index + 1:]:
+    # Assign at most one leader to each follower move. The nearest preceding
+    # same-direction move avoids triangular over-counting of one information chain.
+    for index, (follower_time, follower, follower_direction) in enumerate(qualifying):
+        for leader_time, leader, direction in reversed(qualifying[:index]):
             lag = (follower_time - leader_time).total_seconds()
             if lag > thresholds.follow_window_seconds:
                 break
             if follower != leader and follower_direction == direction:
                 events.append(LeadLagEvent(leader_book=leader, follower_book=follower, leader_time=leader_time, follower_time=follower_time, lag_seconds=lag, direction=direction))
+                break
     leader_counts: dict[str, int] = {}
     follow_counts: dict[str, int] = {}
     for event in events:
         leader_counts[event.leader_book] = leader_counts.get(event.leader_book, 0) + 1
         follow_counts[event.follower_book] = follow_counts.get(event.follower_book, 0) + 1
-    reasons = [] if len(scoped) >= 2 and moves else ["at least two temporally distinct price observations are required"]
-    return LongitudinalAnalysis(status="COMPUTED" if not reasons else "NOT_COMPUTABLE", market_id=market_id, selection=selection, as_of=cutoff, snapshot_fingerprints=fingerprints, moves=tuple(moves), lead_lag_events=tuple(events), leader_counts=leader_counts, follow_counts=follow_counts, pressure=tuple(pressure), reasons=tuple(reasons))
+    market_types = {
+        quote.market_type
+        for snapshot in scoped
+        for quote in snapshot.quotes
+        if quote.market_id == market_id and quote.event_id == selected_event
+    }
+    movement_computable = len(scoped) >= 2 and bool(moves)
+    lead_lag_computable = len(events) >= thresholds.minimum_lead_events
+    pressure_computable = bool(pressure)
+    metric_reasons: dict[str, str] = {}
+    if not movement_computable:
+        metric_reasons["movement"] = "at least two temporally distinct price observations are required"
+    if not lead_lag_computable:
+        metric_reasons["lead_lag"] = f"at least {thresholds.minimum_lead_events} observed follower events are required"
+    if not pressure_computable:
+        metric_reasons["pressure"] = "ticket and handle observations are required"
+    reasons = () if movement_computable else (metric_reasons["movement"],)
+    return LongitudinalAnalysis(
+        status="COMPUTED" if movement_computable else "NOT_COMPUTABLE",
+        event_id=selected_event,
+        market_id=market_id,
+        market_type=next(iter(market_types)) if len(market_types) == 1 else "MIXED",
+        selection=selection,
+        as_of=cutoff,
+        snapshot_fingerprints=fingerprints,
+        moves=tuple(moves),
+        lead_lag_events=tuple(events),
+        leader_counts=leader_counts,
+        follow_counts=follow_counts,
+        pressure=tuple(pressure),
+        movement_status="COMPUTED" if movement_computable else "NOT_COMPUTABLE",
+        lead_lag_status="COMPUTED" if lead_lag_computable else "NOT_COMPUTABLE",
+        pressure_status="COMPUTED" if pressure_computable else "NOT_COMPUTABLE",
+        metric_reasons=metric_reasons,
+        reasons=reasons,
+    )
 
 
 class LongitudinalStore:

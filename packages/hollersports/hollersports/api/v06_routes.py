@@ -122,6 +122,7 @@ class BacktestRequest(BaseModel):
 
 class LongitudinalRequest(BaseModel):
     analysis_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
     selection: str = Field(min_length=1)
     as_of: datetime
     analyzed_at: datetime
@@ -267,7 +268,14 @@ def market_book_analysis(market_id: str, request: Request, at_or_before: datetim
 
 @router.post("/markets/{market_id}/longitudinal")
 def longitudinal_market_analysis(market_id: str, body: LongitudinalRequest, request: Request) -> dict[str, Any]:
-    analysis = analyze_longitudinal_market(_snapshot_store(request).query(end_at=body.as_of), market_id, body.selection, body.as_of, body.thresholds)
+    analysis = analyze_longitudinal_market(
+        _snapshot_store(request).query(end_at=body.as_of),
+        market_id,
+        body.selection,
+        body.as_of,
+        body.thresholds,
+        event_id=body.event_id,
+    )
     try:
         record = LongitudinalStore(request.app.state.data_root).append(body.analysis_id, body.analyzed_at, analysis)
     except ValueError as exc:

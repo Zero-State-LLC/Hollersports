@@ -85,7 +85,7 @@ def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
         for body in (snapshot("s1", 0, 0.50, 0.50), snapshot("s2", 5, 0.53, 0.50, pressure=True), snapshot("s3", 8, 0.53, 0.53)):
             assert client.post("/v1/markets/snapshots", json=body).status_code == 200
         response = client.post("/v1/markets/market-long/longitudinal", json={
-            "analysis_id": "long-1", "selection": "HOME", "as_of": "2026-01-01T10:10:00Z",
+            "analysis_id": "long-1", "event_id": "event-1", "selection": "HOME", "as_of": "2026-01-01T10:10:00Z",
             "analyzed_at": "2026-01-01T10:11:00Z", "thresholds": {
                 "minimum_probability_move": 0.01, "follow_window_seconds": 600,
                 "minimum_pressure_imbalance": 0.1, "maximum_resistant_move": 0.005,
@@ -95,6 +95,9 @@ def test_v06_longitudinal_bookmaker_timeline_and_pressure(tmp_path):
         body = response.json()["analysis"]
         assert body["leader_counts"] == {"book-a": 1}
         assert body["follow_counts"] == {"book-b": 1}
+        assert body["movement_status"] == "COMPUTED"
+        assert body["lead_lag_status"] == "COMPUTED"
+        assert body["pressure_status"] == "COMPUTED"
         assert all(item["causal_attribution"] == "UNKNOWN" for item in body["pressure"])
         health = client.get("/v1/health/bookmaker-longitudinal").json()
         assert health["status"] == "PASS"
