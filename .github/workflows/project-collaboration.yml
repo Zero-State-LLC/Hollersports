@@ -1,0 +1,77 @@
+name: Project collaboration automation
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  projects: write
+
+env:
+  ORG_NAME: Zero-State-LLC
+  PROJECT_NUMBER: '6'
+  STATUS_FIELD: Status
+  STATUS_VALUE: Todo
+
+jobs:
+  add-to-project-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue or PR to project and notify team
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const contentId = context.payload.issue?.node_id || context.payload.pull_request?.node_id;
+            const issueNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+            if (!contentId || !issueNumber) return;
+            const projectNumber = Number(process.env.PROJECT_NUMBER);
+            if (!projectNumber) { core.warning('No project number configured'); return; }
+            const projectResult = await github.graphql(`
+              query($org:String!, $number:Int!) {
+                organization(login:$org) {
+                  projectV2(number:$number) {
+                    id
+                    title
+                    fields(first:50) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField { id name options { name } }
+                      }
+                    }
+                  }
+                }
+              }`, { org: process.env.ORG_NAME, number: projectNumber });
+            const project = projectResult.organization.projectV2;
+            if (!project) { core.setFailed('Configured project was not found'); return; }
+            let itemId = null;
+            try {
+              const added = await github.graphql(`
+                mutation($projectId:ID!, $contentId:ID!) {
+                  addProjectV2ItemById(input:{projectId:$projectId, contentId:$contentId}) { item { id } }
+                }`, { projectId: project.id, contentId });
+              itemId = added.addProjectV2ItemById.item.id;
+            } catch (error) {
+              const message = String(error.message || error).toLowerCase();
+              if (!message.includes('already') && !message.includes('existing')) throw error;
+              core.info('Item was already present in the project');
+            }
+            if (itemId) {
+              const status = project.fields.nodes.find(field => field.name === process.env.STATUS_FIELD);
+              const option = status?.options?.find(item => item.name === process.env.STATUS_VALUE);
+              if (status && option) {
+                await github.graphql(`
+                  mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
+                    updateProjectV2ItemFieldValue(input:{projectId:$projectId, itemId:$itemId, fieldId:$fieldId, value:{singleSelectOptionId:$optionId}}) { projectV2Item { id } }
+                  }`, { projectId: project.id, itemId, fieldId: status.id, optionId: option.id });
+              }
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `CC @Zero-State-LLC/partner-agents. This item was added to project #${projectNumber} (${project.title}) for shared triage.`
+            });
