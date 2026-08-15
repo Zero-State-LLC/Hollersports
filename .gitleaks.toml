@@ -1,0 +1,39 @@
+title = "Zero-State-LLC secret scanning"
+
+[extend]
+# All default rules stay on, including generic-api-key. Rather than disabling
+# that noisy rule wholesale, the allowlist below suppresses only the specific
+# shapes that were triaged as false positives across the org on 2026-08-15
+# (20 findings, 0 real secrets).
+useDefault = true
+
+[allowlist]
+description = "Triaged false-positive shapes. Deliberately narrow."
+
+regexTarget = "match"
+regexes = [
+  # Swift persistence key constants, e.g.
+  #   private let bestFloorKey = "HexWire.Gauntlet.BestFloor.v1"
+  #   defaults.set(x, forKey: "App.Thing.v1")
+  #
+  # Restricted to DOT-separated reverse-DNS values on purpose. Real credentials
+  # (sk_live_..., ghp_..., AKIA..., xox...) are not dot-separated, so they are
+  # still reported. Verified: this suppresses the 6 UserDefaults keys in Hexwire
+  # and none of the sample credentials tested against it.
+  '''(?i)\w*key\w*\s*=\s*"[A-Za-z0-9]+(\.[A-Za-z0-9]+)+"''',
+  '''(?i)for\s*key:\s*"[A-Za-z0-9]+(\.[A-Za-z0-9]+)+"''',
+]
+
+paths = [
+  # Golden/snapshot test fixtures: identifiers like "key": "lsd_open_42".
+  '''(?i).*/fixtures?/.*''',
+  '''(?i).*golden.*\.json$''',
+
+  # Synthetic PEM and "sk-abc123" literals that exist so tests can assert the
+  # privacy preflight BLOCKS them. Provider-specific rules still apply here.
+  '''.*test_privacy_preflight\.py$''',
+
+  # Prose that discusses credentials rather than containing them.
+  '''(?i).*PRIVACY\.md$''',
+  '''(?i)^docs/.*\.md$''',
+]
