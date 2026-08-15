@@ -71,13 +71,19 @@ GL_CONF=()
 "$BIN/gitleaks" detect --source "$ROOT" "${GL_CONF[@]}" \
   --redact --no-banner || record "gitleaks: secrets detected"
 
+BANDIT_EXCLUDE="$ROOT/.git,$ROOT/build,$ROOT/DerivedData,$ROOT/.venv,$ROOT/node_modules"
+
 if [ "$has_python" = 1 ]; then
-  note "python SAST (bandit)"
-  # High severity AND high confidence only. Noisier settings get the whole
-  # gate switched off within a week.
-  "$VENV/bin/bandit" -r "$ROOT" -ll -ii -q \
-    --exclude "$ROOT/.git,$ROOT/build,$ROOT/DerivedData,$ROOT/.venv,$ROOT/node_modules" \
-    || record "bandit: high-severity python findings"
+  # Note on flags: -l/-ll/-lll is severity LOW/MEDIUM/HIGH and above, and
+  # -i/-ii/-iii is the same for confidence. So -ll -ii means MEDIUM and above,
+  # NOT high -- which is why this gate first failed on repos whose worst
+  # finding was medium.
+  note "python SAST (bandit) — informational, medium severity and above"
+  "$VENV/bin/bandit" -r "$ROOT" -ll -ii -q --exclude "$BANDIT_EXCLUDE" || true
+
+  note "python SAST (bandit) — gate, high severity AND high confidence"
+  "$VENV/bin/bandit" -r "$ROOT" -lll -iii -q --exclude "$BANDIT_EXCLUDE" \
+    || record "bandit: high-severity, high-confidence python findings"
 else
   note "python SAST (bandit) — no python sources, skipped"
 fi
