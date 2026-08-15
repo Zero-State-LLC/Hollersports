@@ -2,6 +2,7 @@ name: CodeQL
 
 on:
   push:
+    branches: [claude/boost-aware-execution-engine-cxKjP]
   pull_request:
 
 permissions:
