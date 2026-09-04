@@ -2,6 +2,8 @@
 
 Authorized contributors and agents only.
 
+Agents follow [`AGENTS.md`](AGENTS.md). Org and partner context lives in [`Zero-State-LLC/agent-context`](https://github.com/Zero-State-LLC/agent-context).
+
 
 ## Licensing and contributions
 
