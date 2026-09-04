@@ -151,6 +151,7 @@ runner = SlateRunner(
 
 ## Documentation
 
+- **[AGENTS.md](AGENTS.md)**: Agent contract (intent, Escalation, `agent-context`)
 - **[Integration Guide](INTEGRATION_GUIDE.md)**: Comprehensive integration documentation
 - **[API Reference](engine/)**: Inline documentation in each module
 - **[Examples](examples/)**: Working code examples
