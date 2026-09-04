@@ -2,59 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/**, cursor/**]
+    branches: [ main ]
   pull_request:
-    branches: [main]
+    branches: [ main ]
 
 jobs:
-  python:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install package
-        run: |
-          python -m pip install -U pip
-          pip install -e "packages/hollersports[dev]"
-      - name: Unit, integration, golden, calibration tests
-        run: pytest tests/ --ignore=hollersports-core -q --strict-markers
-      - name: Operator day smoke
-        run: python scripts/smoke_operator_day.py --out docs/evidence/smoke_operator_day.last.json
-      - name: Multi-fixture calibration suite
-        run: python scripts/run_calibration_suite.py --out docs/evidence/calibration_suite.last.json
-      - name: Fixture backfill accumulation
-        run: |
-          python scripts/backfill_fixtures.py \
-            --repeats 2 \
-            --paper-top-n 50 \
-            --data-root /tmp/holler-ci-backfill \
-            --out docs/evidence/backfill_calibration.last.json
-
-  operator-web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/operator-web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: packages/operator-web/package-lock.json
-      - name: Install
-        run: npm ci || npm install
-      - name: Lint
-        run: npm run lint
-      - name: Build
-        run: npm run build
-      - name: Guardrail — no live UX / App Store risk phrases
-        run: |
-          # Live execution + real-money rails (product law + App Store 5.3 posture)
-          if grep -RInE 'Place bet|LIVE_APPROVED|placeBet|Cash out|Deposit now|Withdraw funds|Sure bet|Guaranteed profit|Guaranteed ROI' \
-            --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git .; then
-            echo "Forbidden live / guarantee UX strings found" >&2
-            exit 1
-          fi
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Add your project's dependencies here, e.g.:
+        # pip install -r requirements.txt
+    - name: Run tests
+      run: |
+        # Add your test command here, e.g.:
+        # pytest

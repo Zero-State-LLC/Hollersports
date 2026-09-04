@@ -1,0 +1,151 @@
+name: Project collaboration automation
+
+on:
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  repository-projects: write
+
+env:
+  ORG_NAME: Zero-State-LLC
+  PROJECT_NUMBER: '16'
+  STATUS_FIELD: Status
+  STATUS_VALUE: Todo
+
+jobs:
+  add-to-project-and-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue or PR to project and notify team
+        uses: actions/github-script@v7
+        with:
+          # Org ProjectsV2 is not reachable with the default GITHUB_TOKEN --
+          # `repository-projects` covers classic repo projects only. Supply a
+          # PAT or App token with `project` scope as PROJECT_TOKEN to enable
+          # the board step; without it the notification still runs.
+          github-token: ${{ secrets.PROJECT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const contentId = context.payload.issue?.node_id || context.payload.pull_request?.node_id;
+            const issueNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+            if (!contentId || !issueNumber) return;
+            const projectNumber = Number(process.env.PROJECT_NUMBER);
+
+            // Adding an item to a triage board is not a reason to fail the
+            // author's checks. Every board failure below degrades to a warning
+            // annotation, so it stays visible without turning the PR red.
+            let project = null;
+            if (!projectNumber) {
+              core.warning('No project number configured; skipping the board step.');
+            } else {
+              try {
+                const result = await github.graphql(`
+                  query($org:String!, $number:Int!) {
+                    organization(login:$org) {
+                      projectV2(number:$number) {
+                        id
+                        title
+                        fields(first:50) {
+                          nodes {
+                            ... on ProjectV2SingleSelectField { id name options { name } }
+                          }
+                        }
+                      }
+                    }
+                  }`, { org: process.env.ORG_NAME, number: projectNumber });
+                project = result?.organization?.projectV2 || null;
+              } catch (error) {
+                // github.graphql throws on a partial response, so a NOT_FOUND
+                // arrives here rather than as a null project.
+                project = null;
+                core.warning(`Could not read project #${projectNumber}: ${error.message || error}`);
+              }
+              if (!project) {
+                // Two very different causes look identical from the outside: the
+                // number is stale, or the token cannot see ProjectsV2 at all.
+                // Probe once so the annotation says which, instead of leaving a
+                // human to guess.
+                let diagnosis = '';
+                try {
+                  const list = await github.graphql(`
+                    query($org:String!) {
+                      organization(login:$org) {
+                        projectsV2(first:20) { nodes { number title closed } }
+                      }
+                    }`, { org: process.env.ORG_NAME });
+                  const nodes = list?.organization?.projectsV2?.nodes || [];
+                  diagnosis = nodes.length
+                    ? 'The token CAN read ProjectsV2, so PROJECT_NUMBER is simply wrong. Available: ' +
+                      nodes.map(n => `#${n.number} "${n.title}"${n.closed ? ' (closed)' : ''}`).join(', ')
+                    : `The query returned no boards for ${process.env.ORG_NAME}. That means none are VISIBLE to this token, ` +
+                      'which is not proof none exist — an org board can read as empty to a token without `project` scope ' +
+                      'rather than erroring. Confirm with a PROJECT_TOKEN before concluding the board is gone.';
+                } catch (error) {
+                  const msg = String(error.message || error);
+                  diagnosis = /scope/i.test(msg)
+                    ? 'The token CANNOT read ProjectsV2 — this is a permissions problem, not a wrong number. ' +
+                      'The default GITHUB_TOKEN never can; set a PROJECT_TOKEN secret with `project` scope.'
+                    : `Could not enumerate projects either: ${msg}`;
+                }
+                core.warning(
+                  `Project #${projectNumber} in ${process.env.ORG_NAME} was not found or is not visible. ${diagnosis}`
+                );
+              }
+            }
+
+            let itemId = null;
+            if (project) {
+              try {
+                const added = await github.graphql(`
+                  mutation($projectId:ID!, $contentId:ID!) {
+                    addProjectV2ItemById(input:{projectId:$projectId, contentId:$contentId}) { item { id } }
+                  }`, { projectId: project.id, contentId });
+                itemId = added.addProjectV2ItemById.item.id;
+              } catch (error) {
+                const message = String(error.message || error).toLowerCase();
+                if (message.includes('already') || message.includes('existing')) {
+                  core.info('Item was already present in the project');
+                } else {
+                  core.warning(`Could not add this item to the project: ${error.message || error}`);
+                }
+              }
+            }
+
+            if (itemId) {
+              const status = project.fields.nodes.find(field => field.name === process.env.STATUS_FIELD);
+              const option = status?.options?.find(item => item.name === process.env.STATUS_VALUE);
+              if (status && option) {
+                try {
+                  await github.graphql(`
+                    mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
+                      updateProjectV2ItemFieldValue(input:{projectId:$projectId, itemId:$itemId, fieldId:$fieldId, value:{singleSelectOptionId:$optionId}}) { projectV2Item { id } }
+                    }`, { projectId: project.id, itemId, fieldId: status.id, optionId: option.id });
+                } catch (error) {
+                  core.warning(`Could not set ${process.env.STATUS_FIELD}: ${error.message || error}`);
+                }
+              } else {
+                core.warning(`Field "${process.env.STATUS_FIELD}" with option "${process.env.STATUS_VALUE}" was not found on the project.`);
+              }
+            }
+
+            // The team notification is the part that matters for collaboration.
+            // It used to be unreachable: the board query threw first, so nobody
+            // was ever CC'd on any issue or PR.
+            const body = project
+              ? `CC @Zero-State-LLC/partner-agents. This item was added to project #${projectNumber} (${project.title}) for shared triage.`
+              : 'CC @Zero-State-LLC/partner-agents. Flagged for shared triage.';
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            } catch (error) {
+              core.warning(`Could not post the triage comment: ${error.message || error}`);
+            }

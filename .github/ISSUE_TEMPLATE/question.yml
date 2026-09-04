@@ -1,0 +1,13 @@
+---
+name: Question
+description: Ask a question about this project
+title: "[QUESTION] "
+labels: ["question"]
+assignees: ''
+---
+
+**Question**
+A clear and concise question.
+
+**Additional context**
+Add any other context or screenshots about the question here.

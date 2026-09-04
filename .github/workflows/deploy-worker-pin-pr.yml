@@ -1,0 +1,200 @@
+name: Deploy Worker and open pin PR
+
+# Merging this workflow does not deploy. Dispatch is the only trigger, and
+# acknowledge must be typed exactly. Do not add push or pull_request triggers.
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledge:
+        description: Type I_ACKNOWLEDGE_PRODUCTION_DEPLOY_AND_PIN to deploy production and open a pin PR
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: deploy-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-pin-pr:
+    name: Deploy production Worker, then open pin PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://noema.guru
+    steps:
+      - name: Refuse missing production-deploy acknowledgement
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.acknowledge }}" != "I_ACKNOWLEDGE_PRODUCTION_DEPLOY_AND_PIN" ]; then
+            echo "::error::Set acknowledge=I_ACKNOWLEDGE_PRODUCTION_DEPLOY_AND_PIN. Merging this workflow does not deploy."
+            exit 1
+          fi
+
+      - name: Refuse non-main production deployment
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Production Worker deployments must run from main. Got ${GITHUB_REF}."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out pinned Noema-Specs beside the workspace
+        # Cross-repo conformance tests resolve ../Noema-Specs. Keep this
+        # deployment gate aligned with CI by checking out the exact Specs
+        # commit declared in spec-compat.json, never the moving main branch.
+        # Provenance: Notion Sprint 001 Hub + Loop 805 Slice 00 + Hash: NOT_COMPUTABLE
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          PIN=$(python3 -c "import json;print(json.load(open('spec-compat.json'))['specs']['commit'])")
+          git clone --quiet --filter=blob:none https://github.com/Zero-State-LLC/Noema-Specs.git "$GITHUB_WORKSPACE/../Noema-Specs"
+          git -C "$GITHUB_WORKSPACE/../Noema-Specs" checkout --quiet "$PIN"
+          echo "Noema-Specs at $PIN"
+
+      - name: Refuse frozen first world as PLAY default
+        run: |
+          set -euo pipefail
+          WORLD=$(python3 -c "import pathlib,re; t=pathlib.Path('workers/noema/wrangler.toml').read_text(); m=re.search(r'DEFAULT_WORLD_ID\\s*=\\s*\"([^\"]+)\"', t); print(m.group(1) if m else '')")
+          if [ "$WORLD" = "world-01" ] || [ "$WORLD" = "world.perihelion-reach" ]; then
+            echo "::error::Refusing production deploy: DEFAULT_WORLD_ID ${WORLD} is the frozen first world."
+            exit 1
+          fi
+          if [ "$WORLD" != "world.perihelion-reach-3" ]; then
+            echo "::error::Refusing production deploy: DEFAULT_WORLD_ID ${WORLD} is not the live PLAY DO world.perihelion-reach-3."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: workers/noema/package-lock.json
+
+      - name: Verify generated PR token is configured
+        env:
+          NOEMA_PIN_PR_TOKEN: ${{ secrets.NOEMA_PIN_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NOEMA_PIN_PR_TOKEN}" ]; then
+            echo "::error::NOEMA_PIN_PR_TOKEN is required before deploying so the generated PR triggers normal review and CI checks."
+            exit 1
+          fi
+
+      - name: Install Worker dependencies
+        working-directory: workers/noema
+        run: npm ci
+
+      - name: Pre-deploy Worker checks
+        working-directory: workers/noema
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+
+      - name: Read-only canonical settlement preflight
+        working-directory: workers/noema
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_CANONICAL_WORLD_ID: world.perihelion-reach-3
+        run: |
+          set -euo pipefail
+          node scripts/inspect-settlement.mjs
+
+      - name: Read-only transactional email preflight
+        working-directory: workers/noema
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+        run: |
+          set -euo pipefail
+          node scripts/email-provider-preflight.mjs
+
+      - name: Deploy production Worker
+        working-directory: workers/noema
+        env:
+          NOEMA_ENV: production
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/noema-pin"
+          npm run deploy 2>&1 | tee "$RUNNER_TEMP/noema-pin/wrangler-deploy.txt"
+          node scripts/worker-pin-pr.mjs extract-wrangler-version \
+            --deploy-output "$RUNNER_TEMP/noema-pin/wrangler-deploy.txt" \
+            > "$RUNNER_TEMP/noema-pin/wrangler-worker-version-id.txt"
+          echo "Wrangler Worker version id: $(cat "$RUNNER_TEMP/noema-pin/wrangler-worker-version-id.txt")"
+
+      - name: Read live /version and /ready evidence after deploy
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/noema-pin"
+          EXPECTED="$(cat "$RUNNER_TEMP/noema-pin/wrangler-worker-version-id.txt")"
+          for attempt in $(seq 1 24); do
+            curl -fsS --connect-timeout 5 --max-time 20 https://noema.guru/version > "$RUNNER_TEMP/noema-pin/live-version.json"
+            LIVE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('worker_version_id',''))" "$RUNNER_TEMP/noema-pin/live-version.json")"
+            if [ "$LIVE" = "$EXPECTED" ]; then break; fi
+            if [ "$attempt" = "24" ]; then
+              echo "::error::live /version worker_version_id ${LIVE:-missing} did not converge to Wrangler deployment ${EXPECTED}."
+              exit 1
+            fi
+            sleep 5
+          done
+          curl -fsS --connect-timeout 5 --max-time 20 https://noema.guru/ready > "$RUNNER_TEMP/noema-pin/ready.json"
+          cat "$RUNNER_TEMP/noema-pin/live-version.json"
+          cat "$RUNNER_TEMP/noema-pin/ready.json"
+
+      - name: Generate pin update and PR body from live evidence
+        run: |
+          set -euo pipefail
+          node workers/noema/scripts/worker-pin-pr.mjs generate \
+            --compat spec-compat.json \
+            --live "$RUNNER_TEMP/noema-pin/live-version.json" \
+            --ready "$RUNNER_TEMP/noema-pin/ready.json" \
+            --expected-worker-version-id "$(cat "$RUNNER_TEMP/noema-pin/wrangler-worker-version-id.txt")" \
+            --source-commit "$GITHUB_SHA" \
+            --evidence-url https://noema.guru/version \
+            --body-output "$RUNNER_TEMP/noema-pin/pr-body.md"
+          node workers/noema/scripts/worker-pin-pr.mjs validate \
+            --compat spec-compat.json \
+            --live "$RUNNER_TEMP/noema-pin/live-version.json" \
+            --ready "$RUNNER_TEMP/noema-pin/ready.json" \
+            --expected-worker-version-id "$(cat "$RUNNER_TEMP/noema-pin/wrangler-worker-version-id.txt")"
+
+      - name: Open or update generated pin PR
+        env:
+          GH_TOKEN: ${{ secrets.NOEMA_PIN_PR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- spec-compat.json; then
+            echo "Pin already matches live /version; no PR needed."
+            exit 0
+          fi
+
+          LIVE=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['worker_version_id'])" "$RUNNER_TEMP/noema-pin/live-version.json")
+          BRANCH="automation/worker-pin-${LIVE}"
+          TITLE="chore: pin live Worker ${LIVE}"
+
+          git config user.name "noema-pin-bot"
+          git config user.email "noema-pin-bot@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH" || true
+          git checkout -B "$BRANCH"
+          git add spec-compat.json
+          git commit -m "$TITLE"
+          git push --force-with-lease origin "$BRANCH"
+
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr edit "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/noema-pin/pr-body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/noema-pin/pr-body.md"
+          fi

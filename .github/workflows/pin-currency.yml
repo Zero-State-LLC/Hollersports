@@ -1,0 +1,83 @@
+name: pin-currency
+
+# The scheduled/workflow_dispatch runs are drift monitors. The pull_request run is
+# intentionally narrow: it gates only PRs that edit the authoritative pin, so a
+# normal source PR is not failed just because a deployment happened first. The
+# post-deploy generated PR must pass this check before review/merge.
+on:
+  pull_request:
+    paths:
+      - "spec-compat.json"
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pin-currency
+  cancel-in-progress: true
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: spec-compat.json
+          sparse-checkout-cone-mode: false
+      - name: Report specs.commit drift against Noema-Specs main
+        # Warning only, never a failure. Noema CI clones Noema-Specs pinned to
+        # specs.commit, so when the pin lags, a cross-repo test whose fixture
+        # landed after it skips in CI while passing locally -- green, checking
+        # nothing (that is what happened to RFC-0129's suite, #608). This makes
+        # the lag visible on the six-hourly monitor. It does not fail, because
+        # this repo deliberately does not go red for a change in another one.
+        run: |
+          set -euo pipefail
+          PIN=$(python3 -c "import json;print(json.load(open('spec-compat.json'))['specs']['commit'])")
+          rm -rf /tmp/specs-drift
+          git clone --quiet --filter=blob:none --no-checkout \
+            https://github.com/Zero-State-LLC/Noema-Specs.git /tmp/specs-drift
+          MAIN=$(git -C /tmp/specs-drift rev-parse HEAD)
+          if ! git -C /tmp/specs-drift cat-file -e "$PIN" 2>/dev/null; then
+            echo "::warning::spec-compat.json specs.commit ${PIN} is not a commit in Noema-Specs."
+            exit 0
+          fi
+          BEHIND=$(git -C /tmp/specs-drift rev-list --count "${PIN}..${MAIN}")
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "::warning::spec-compat.json specs.commit is ${BEHIND} commit(s) behind Noema-Specs main (${MAIN}). Cross-repo tests needing a newer fixture will skip in CI rather than run. Re-sync the pin with the Worker suite verified green against it."
+          else
+            echo "specs.commit is current with Noema-Specs main (${MAIN})."
+          fi
+
+      - name: Compare hosted_live.worker_version_id against GET /version
+        run: |
+          set -euo pipefail
+          PINNED=$(python3 -c "import json;print(json.load(open('spec-compat.json'))['hosted_live']['worker_version_id'])")
+          BODY=$(curl -fsS --connect-timeout 5 --max-time 20 https://noema.guru/version) || {
+            echo "::warning::/version unreachable; pin currency not determined this run"
+            exit 0
+          }
+          LIVE=$(printf '%s' "$BODY" | python3 -c "import json,sys;print(json.load(sys.stdin).get('worker_version_id',''))") || {
+            echo "::warning::/version returned unparseable JSON; pin currency not determined"
+            exit 0
+          }
+          DEPLOYED=$(printf '%s' "$BODY" | python3 -c "import json,sys;print(json.load(sys.stdin).get('deployed_at',''))") || true
+          echo "pinned: $PINNED"
+          echo "live:   $LIVE  (deployed_at $DEPLOYED)"
+          if [ -z "$LIVE" ]; then
+            echo "::warning::/version returned no worker_version_id; pin currency not determined"
+            exit 0
+          fi
+          if [ "$PINNED" != "$LIVE" ]; then
+            echo "::error::spec-compat.json hosted_live.worker_version_id is stale."
+            echo "::error::pinned $PINNED, live $LIVE, deployed_at $DEPLOYED"
+            echo "Move the pin, and re-derive which commits the build carries — /version"
+            echo "reports the version id and the deploy time, not a source commit."
+            exit 1
+          fi
+          echo "Pin matches the live Worker."
