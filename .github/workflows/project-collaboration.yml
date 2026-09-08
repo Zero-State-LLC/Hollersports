@@ -10,7 +10,7 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
-  projects: write
+  repository-projects: write
 
 env:
   ORG_NAME: Zero-State-LLC
